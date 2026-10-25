@@ -1,0 +1,18 @@
+# ---- secrets / private data: never in git ----
+config.json
+data/
+*.sqlite
+*.sqlite3
+memory.backup-*.sqlite
+*.log
+.env
+
+# ---- python ----
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ---- local models / editor ----
+models/
+.idea/

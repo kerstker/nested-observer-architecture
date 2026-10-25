@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>乃爱控制台</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36; --text: #e6e8ee; --muted: #8b93a7;
+    --accent: #7aa2ff; --good: #5fd18b; --warn: #f2b45a; --bad: #ef6b6b; --violet: #b48cff; --teal: #4fd1c5;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; padding: 12px 20px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 2; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  .pill { padding: 2px 10px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); color: var(--muted); }
+  .pill.awake { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+  .pill.asleep { color: var(--violet); border-color: color-mix(in srgb, var(--violet) 40%, transparent); }
+  .meta { color: var(--muted); font-size: 12px; }
+  .spacer { flex: 1; }
+  #error { display: none; background: color-mix(in srgb, var(--bad) 18%, var(--bg)); color: var(--bad); padding: 8px 20px; border-bottom: 1px solid var(--line); }
+  main { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.4fr) minmax(320px, 1.3fr); gap: 16px; padding: 16px 20px 40px; align-items: start; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 720px) { main { grid-template-columns: 1fr; padding: 12px 16px 32px; } header { padding: 10px 16px; } }
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  section h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 10px; letter-spacing: .04em; }
+  .row { display: grid; grid-template-columns: 64px 1fr 44px; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
+  .row .v { text-align: right; font-family: var(--mono); color: var(--muted); font-size: 12px; }
+  .bar { height: 8px; background: #222733; border-radius: 4px; overflow: hidden; position: relative; }
+  .bar > i { display: block; height: 100%; border-radius: 4px; background: var(--accent); transition: width .4s; }
+  .bar.center > i { position: absolute; top: 0; }
+  .bar.center::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--muted); opacity: .5; }
+  .big { font-size: 20px; font-weight: 600; margin: 2px 0 6px; }
+  .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 360px; overflow-y: auto; }
+  .list li { border-left: 2px solid var(--line); padding: 2px 0 2px 10px; font-size: 13px; overflow-wrap: anywhere; }
+  .when { color: var(--muted); font-size: 11px; font-family: var(--mono); }
+  .chip { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 4px; margin-right: 6px; border: 1px solid currentColor; opacity: .9; }
+  .src-perception { color: var(--accent); } .src-needs { color: var(--warn); } .src-memory { color: var(--violet); }
+  .src-prediction { color: var(--bad); } .src-continuity { color: var(--teal); } .src-inner_speech { color: var(--muted); } .src-self_model { color: #e6d36a; }
+  .pos { color: var(--good); } .neg { color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; }
+  td.num { font-family: var(--mono); text-align: right; white-space: nowrap; }
+  .table-wrap { overflow-x: auto; }
+  #chat { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow-y: auto; margin-bottom: 10px; }
+  .msg { padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; max-width: 92%; }
+  .msg.me { align-self: flex-end; background: color-mix(in srgb, var(--accent) 22%, var(--panel)); }
+  .msg.noa { align-self: flex-start; background: #20242e; }
+  .msg.sys { align-self: center; color: var(--muted); font-size: 12px; background: none; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; }
+  input { background: #0f1218; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: inherit; min-width: 0; }
+  #text { flex: 1 1 200px; }
+  #nick { width: 96px; }
+  button { background: #222837; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 12px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: wait; }
+  button.primary { background: var(--accent); color: #0b1020; border-color: var(--accent); font-weight: 600; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+  .empty { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>乃爱 · 控制台</h1>
+  <span id="mode" class="pill">连接中…</span>
+  <span id="awakening" class="meta"></span>
+  <span id="attention" class="meta"></span>
+  <span class="spacer"></span>
+  <span id="backend" class="meta"></span>
+</header>
+<div id="error"></div>
+<main>
+  <div class="col">
+    <section>
+      <h2>身体与心情</h2>
+      <div class="big" id="mood">—</div>
+      <div class="muted" id="body"></div>
+      <div id="core"></div>
+    </section>
+    <section><h2>情绪</h2><div id="emotions"></div></section>
+    <section><h2>需求</h2><div id="needs"></div></section>
+    <section>
+      <h2>人格（随经历缓慢变化）</h2>
+      <div id="traits"></div>
+      <ul class="list" id="trait-changes" style="margin-top:10px"></ul>
+    </section>
+  </div>
+
+  <div class="col">
+    <section>
+      <h2>她听到了什么，选择了什么</h2>
+      <div class="muted" id="autonomy" style="margin-bottom:8px"></div>
+      <ul class="list" id="decisions"></ul>
+    </section>
+    <section>
+      <h2>意识流 · 每个周期胜出进入意识的内容</h2>
+      <ul class="list" id="stream" style="max-height:420px"></ul>
+    </section>
+    <section><h2>心里挂着的事 · 等待下一次竞争</h2><ul class="list" id="pending"></ul></section>
+    <section><h2>内心念头</h2><ul class="list" id="thoughts"></ul></section>
+    <section><h2>情绪变化的原因</h2><ul class="list" id="causes"></ul></section>
+  </div>
+
+  <div class="col">
+    <section>
+      <h2>和她说话</h2>
+      <div id="chat"><div class="msg sys">这里的对话和 QQ 里一样会成为她的经历</div></div>
+      <form id="say">
+        <input id="nick" value="控制台" aria-label="你的名字" title="你的名字">
+        <input id="text" placeholder="说点什么…" autocomplete="off" aria-label="消息">
+        <button class="primary" type="submit">发送</button>
+      </form>
+    </section>
+    <section>
+      <h2>操作</h2>
+      <div class="controls">
+        <button data-act="feed">喂小鱼干</button>
+        <button data-act="pet">摸摸头</button>
+        <button data-act="sleep">让她睡觉</button>
+        <button data-act="wake">叫醒她</button>
+        <button data-act="dream">整理记忆（做梦）</button>
+        <button data-act="think">让她想点什么</button>
+        <button data-act="tick">心跳一次</button>
+      </div>
+    </section>
+    <section>
+      <h2>她对每个人的了解</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>人</th><th>她的印象</th><th class="num">找 ta 的价值</th></tr></thead>
+        <tbody id="people"></tbody>
+      </table></div>
+    </section>
+    <section><h2>最近的经历</h2><ul class="list" id="episodes"></ul></section>
+    <section>
+      <h2>自我</h2>
+      <p id="autobiography" style="margin:0 0 10px;font-size:13px"></p>
+      <dl class="kv" id="self"></dl>
+    </section>
+  </div>
+</main>
+
+<script>
+const token = new URLSearchParams(location.search).get("token") || "";
+const headers = token ? { "X-Console-Token": token } : {};
+const EMO = { joy: "开心", anger: "生气", sorrow: "难过", fear: "害怕", surprise: "惊讶", disgust: "厌恶" };
+const NEED = { hunger: "饥饿", social: "孤独", curiosity: "无聊", hygiene: "清洁" };
+const TRAIT = { affection: "亲和", tsundere: "傲娇", curiosity: "好奇", energy: "活力" };
+const KIND = { dialogue: "对话", proactive: "主动", search: "探索", continuity: "醒来", thought: "念头", prediction: "预测" };
+const SRC = { perception: "感知", needs: "身体", memory: "联想", prediction: "预期", continuity: "连续性", inner_speech: "念头", self_model: "自我" };
+const MOOD = { Neutral: "平静", Joy: "开心", Anger: "生气", Sorrow: "难过", Fear: "害怕", Surprise: "惊讶", Disgust: "厌恶",
+               Excited: "兴奋", "Nervous Laughter": "紧张地笑", Betrayed: "被背叛的感觉" };
+const BODY = { Energetic: "精力充沛", Normal: "状态正常", Tired: "有点累", Exhausted: "精疲力尽", "Sleeping (Zzz...)": "正在睡觉" };
+const FOCUS = { user_message: "有人在和她说话", hunger: "饥饿", social: "孤独", curiosity: "无聊", fatigue: "困倦", pain: "疼痛",
+                ignored: "被冷落", answer_surprise: "意外的回应", association: "回忆", gap: "意识中断", inner_speech: "自己的念头",
+                self_surprise: "对自己的意外" };
+const CHOICE = { spoke: "开口", silent: "沉默", consider: "犹豫", asleep: "睡着", woken: "被吵醒", muted: "被叫安静",
+                 feedback: "反馈", caught_up: "补看消息", noticed: "察觉", left: "离开", away: "已离开", limit: "上限" };
+const CHOICE_CLASS = { spoke: "src-perception", silent: "src-inner_speech", consider: "src-needs", asleep: "src-memory",
+                       woken: "src-prediction", muted: "src-prediction", feedback: "src-self_model", caught_up: "src-continuity",
+                       noticed: "src-self_model", left: "src-memory", away: "src-memory", limit: "src-prediction" };
+// Which direction of change is good for her: more joy is good, more of a negative emotion is bad
+function causeClass(variable, delta) {
+  if (variable === "surprise") return "src-perception";
+  const good = variable === "joy" ? delta > 0 : delta < 0;
+  return good ? "pos" : "neg";
+}
+let serverNow = Date.now() / 1000;
+
+const $ = (id) => document.getElementById(id);
+function el(tag, attrs = {}, ...children) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") n.className = v; else if (k === "style") n.style.cssText = v; else n.setAttribute(k, v);
+  }
+  for (const c of children) if (c != null) n.append(c instanceof Node ? c : String(c));
+  return n;
+}
+function ago(t) {
+  const s = Math.max(0, serverNow - t);
+  if (s < 60) return Math.round(s) + " 秒前";
+  if (s < 3600) return Math.round(s / 60) + " 分钟前";
+  if (s < 86400) return (s / 3600).toFixed(1) + " 小时前";
+  return (s / 86400).toFixed(1) + " 天前";
+}
+function bar(label, value, { max = 1, color = "var(--accent)", fmt } = {}) {
+  const pct = Math.max(0, Math.min(1, value / max)) * 100;
+  return el("div", { class: "row" }, el("span", {}, label),
+    el("div", { class: "bar" }, el("i", { style: `width:${pct}%;background:${color}` })),
+    el("span", { class: "v" }, fmt ? fmt(value) : value.toFixed(2)));
+}
+function centeredBar(label, value) {   // -1..1
+  const left = value < 0 ? 50 + value * 50 : 50, width = Math.abs(value) * 50;
+  const color = value >= 0 ? "var(--good)" : "var(--bad)";
+  return el("div", { class: "row" }, el("span", {}, label),
+    el("div", { class: "bar center" }, el("i", { style: `left:${left}%;width:${width}%;background:${color}` })),
+    el("span", { class: "v" }, (value >= 0 ? "+" : "") + value.toFixed(2)));
+}
+function fill(id, nodes, emptyText = "暂无") {
+  const box = $(id);
+  box.replaceChildren(...(nodes.length ? nodes : [el(box.tagName === "UL" ? "li" : "div", { class: "empty" }, emptyText)]));
+}
+function chip(source) { return el("span", { class: `chip src-${source}` }, SRC[source] || source); }
+
+function render(s) {
+  serverNow = s.now;
+  const mode = $("mode");
+  mode.textContent = s.sleeping ? "睡着了" : "醒着";
+  mode.className = "pill " + (s.sleeping ? "asleep" : "awake");
+  $("awakening").textContent = `第 ${s.awakening} 次醒来` + (s.continuity ? ` · 上次中断了 ${s.continuity.gap}` : "");
+  $("attention").textContent = s.attention ? `注意力在：${FOCUS[s.attention] || s.attention}` : "";
+  $("backend").textContent = `${s.backend}${s.usage ? " · " + s.usage : ""}`;
+
+  $("mood").textContent = MOOD[s.mood] || s.mood;
+  $("body").textContent = BODY[s.body] || s.body;
+  fill("core", [
+    bar("精力", s.energy, { max: 100, color: s.energy < 30 ? "var(--bad)" : "var(--good)", fmt: (v) => v.toFixed(0) }),
+    centeredBar("愉悦度", s.valence),
+    bar("激动程度", s.arousal, { color: "var(--warn)" }),
+    bar("存在焦虑", s.anxiety, { color: "var(--violet)" }),
+    bar("紧张", s.tension, { color: "var(--bad)" }),
+  ]);
+  fill("emotions", Object.entries(EMO).map(([k, name]) => bar(name, s.emotions[k] || 0)));
+  fill("needs", Object.entries(NEED).map(([k, name]) =>
+    bar(name, s.needs[k] || 0, { color: s.needs[k] > 0.7 ? "var(--bad)" : "var(--warn)" })));
+  fill("traits", Object.entries(s.traits).map(([k, v]) => bar(TRAIT[k] || k, v, { color: "var(--violet)" })));
+  fill("trait-changes", s.trait_changes.map((c) => el("li", {},
+    el("span", { class: c.new > c.old ? "pos" : "neg" }, `${TRAIT[c.trait] || c.trait} ${c.old.toFixed(3)} → ${c.new.toFixed(3)}`),
+    " ", c.reason, el("div", { class: "when" }, ago(c.t)))), "还没有经历过一次睡眠整理");
+
+  const muted = Object.keys(s.muted_groups || {});
+  $("autonomy").textContent =
+    (s.autonomous_groups.length ? `可以自己开口的群：${s.autonomous_groups.join("、")}` : "没有允许她自己开口的群（只在被叫到时可能回）") +
+    (muted.length ? ` · 被要求安静：${muted.join("、")}` : "") + (s.unread ? ` · 睡着时没看到的消息 ${s.unread} 条` : "");
+  fill("decisions", s.decisions.map((d) => el("li", {},
+    el("span", { class: "chip " + (CHOICE_CLASS[d.kind] || "src-inner_speech") }, CHOICE[d.kind] || d.kind),
+    d.detail, d.text ? el("div", { class: "muted" }, `${d.user || ""}${d.group_id ? "（群 " + d.group_id + "）" : ""}：${d.text}`) : null,
+    el("div", { class: "when" }, ago(d.t)))), "还没有需要她选择的事");
+
+  fill("stream", s.stream.map((cycle) => el("li", {},
+    el("div", { class: "when" }, ago(cycle.t)),
+    ...cycle.winners.map((w) => el("div", {}, chip(w.source), w.content)))), "还没有内容进入过意识");
+  fill("pending", s.pending.map((c) => el("li", {}, chip(c.source), c.content,
+    el("span", { class: "when" }, `  显著性 ${c.salience.toFixed(2)}`))), "没有");
+  fill("thoughts", s.thoughts.map((t) => el("li", {}, t)), `还没有念头（最短间隔 ${s.idle_thought_interval} 秒）`);
+  fill("causes", s.causes.map((c) => el("li", {},
+    el("span", { class: causeClass(c.variable, c.delta) }, `${EMO[c.variable] || c.variable} ${c.delta > 0 ? "+" : ""}${c.delta.toFixed(2)}`),
+    " ", c.cause, el("div", { class: "when" }, ago(c.t)))));
+
+  fill("people", s.people.map((p) => el("tr", {},
+    el("td", {}, p.nickname, p.ignored ? el("div", { class: "neg" }, "没回她") : p.waiting ? el("div", { class: "muted" }, "等回复中") : null),
+    el("td", {}, p.describe),
+    el("td", { class: "num" }, `聊天 ${p.q_chat.toFixed(2)}`, el("br"), `要吃的 ${p.q_food.toFixed(2)}`))), "还不认识任何人");
+  fill("episodes", s.episodes.map((e) => el("li", {},
+    el("span", { class: "chip src-memory" }, KIND[e.kind] || e.kind),
+    e.content.length > 140 ? e.content.slice(0, 140) + "…" : e.content,
+    el("div", { class: "when" }, `${ago(e.t)} · 心情 ${e.valence >= 0 ? "+" : ""}${e.valence.toFixed(2)} · 意外 ${e.surprise.toFixed(2)}`))));
+
+  $("autobiography").textContent = s.autobiography || "她还没有写过自己的故事（第一次睡眠整理之后才会有）。";
+  const g = s.generation || {};
+  $("self").replaceChildren(
+    el("dt", {}, "自我了解"), el("dd", {}, s.self_model),
+    el("dt", {}, "上次生成"), el("dd", {}, g.max_tokens ? `长度上限 ${g.max_tokens} · 温度 ${g.temperature} · 延迟 ${Math.round(g.delay)}s` : "—"),
+    el("dt", {}, "待发消息"), el("dd", {}, String(s.queue)),
+    el("dt", {}, "收藏的表情"), el("dd", {}, `${s.stickers.count} 张` + (s.stickers.top.length
+      ? "：" + s.stickers.top.map((t) => `#${t.id} 见过${t.uses}次/用过${t.sent}次（${(t.contexts.slice(-2).join("、") || "还不知道什么时候用")}）`).join("；")
+      : "")));
+}
+
+async function api(path, body) {
+  const res = await fetch("/console/api/" + path, body
+    ? { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body) }
+    : { headers });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+  return res.json();
+}
+function formatDream(d) {
+  const lines = [`整理了 ${d.episodes} 段经历`];
+  for (const c of d.trait_changes || [])
+    lines.push(`${TRAIT[c.trait] || c.trait} ${c.old.toFixed(3)} → ${c.new.toFixed(3)}（${c.reason}）`);
+  if (d.diary) lines.push("日记：" + d.diary);
+  if (d.facts && d.facts.length) lines.push("记住的事：" + d.facts.join("；"));
+  return lines.join("\n");
+}
+function showError(msg) { const e = $("error"); e.textContent = msg; e.style.display = msg ? "block" : "none"; }
+function addMsg(kind, text) {
+  const chat = $("chat");
+  chat.append(el("div", { class: "msg " + kind }, text));
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function refresh() {
+  if (document.hidden) return;
+  try { render(await api("state")); showError(""); }
+  catch (err) { showError("连不上她：" + err.message); }
+}
+
+$("say").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const text = $("text").value.trim();
+  if (!text) return;
+  const button = ev.submitter; button.disabled = true;
+  addMsg("me", text); $("text").value = "";
+  try {
+    const r = await api("say", { text, nickname: $("nick").value.trim() || "控制台" });
+    if (r.reply) addMsg("noa", r.reply); else addMsg("sys", "（她没有回）");
+    render(r.state);
+  } catch (err) { addMsg("sys", "发送失败：" + err.message); }
+  finally { button.disabled = false; $("text").focus(); }
+});
+
+document.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", async () => {
+  b.disabled = true;
+  try {
+    const r = await api("act", { action: b.dataset.act, nickname: $("nick").value.trim() || "控制台" });
+    const result = typeof r.result === "string" ? r.result : formatDream(r.result);
+    addMsg(["feed", "pet"].includes(b.dataset.act) ? "noa" : "sys", `【${b.textContent}】${result}`);
+    render(r.state);
+  } catch (err) { addMsg("sys", `${b.textContent} 失败：${err.message}`); }
+  finally { b.disabled = false; }
+}));
+
+refresh();
+setInterval(refresh, 2000);
+document.addEventListener("visibilitychange", refresh);
+</script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import time
 from typing import Dict, Any, List
 
 from src.core import clock
@@ -195,7 +196,7 @@ def trace(gw, full: bool = False) -> Dict[str, Any]:
     for i, r in enumerate(list(gw.llm_trace)):
         calls.append({**r, "i": i, "prompt_len": len(r.get("prompt") or ""), "prompt": cut(r.get("prompt"))})
     return {"monologues": list(gw.monologues)[::-1], "calls": calls[::-1],
-            "tools": list(getattr(gw, "tool_trace", []))[::-1]}
+            "tools": list(getattr(gw, "tool_trace", []))[::-1], "last_related": getattr(gw, "last_related", None)}
 
 def trace_call(gw, i: int) -> Dict[str, Any]:
     calls = list(gw.llm_trace)
@@ -247,9 +248,12 @@ def memory(gw, q: str = "", limit: int = 30) -> Dict[str, Any]:
            "facts": _rows(db, "SELECT id, t, user_id, fact, confidence, visibility FROM semantic_facts ORDER BY id DESC LIMIT 15"),
            "autobiography": _rows(db, "SELECT id, t, text FROM autobiography ORDER BY id DESC LIMIT 5")}
     q = q.strip()
+    if getattr(gw, "graph", None) is not None:
+        out["graph"] = gw.graph.stats()
     if q:
         like = f"%{q}%"
         out["query"] = q
+        out["relations"] = gw.graph.admin_view(q) if getattr(gw, "graph", None) is not None else []
         out["results"] = {
             "episodes": _rows(db, "SELECT id, t, kind, user_id, group_id, content, valence, surprise, visibility "
                                   "FROM episodes WHERE content LIKE ? ORDER BY t DESC LIMIT ?", (like, limit)),
@@ -279,6 +283,87 @@ def history(gw, hours: float = 24.0, points: int = 300) -> List[Dict[str, Any]]:
                     "joy": emo.get("joy"), "sorrow": emo.get("sorrow"), "anger": emo.get("anger"),
                     "fear": emo.get("fear")})
     return out
+
+TOOL_FAILED = ("失败", "出错", "超时", "打不开", "没取到", "查不到", "没能")
+
+def metrics(gw, days: int = 7) -> Dict[str, Any]:
+    """Whether she is doing well, in numbers: who talks to her and comes back, how her tools and
+    promises work out, how her memory holds up, how fast her personality moves, the last graded eval."""
+    import glob
+    import os
+    now = clock.now()
+    db = gw.memory.db.db_path
+    since = now - days * 86400
+    msgs = _rows(db, "SELECT user_id, group_id, role, timestamp AS t FROM interactions WHERE timestamp >= ? "
+                     "ORDER BY timestamp", (since,))
+    per_day: Dict[str, Dict[str, Any]] = {}
+    first_seen: Dict[str, str] = {}
+    sessions, last = [], {}
+    for m in msgs:
+        day = time.strftime("%m-%d", time.localtime(m["t"]))
+        d = per_day.setdefault(day, {"day": day, "heard": 0, "said": 0, "people": set(), "returning": set()})
+        if m["role"] == "assistant":
+            d["said"] += 1
+            continue
+        d["heard"] += 1
+        uid = m["user_id"]
+        d["people"].add(uid)
+        if uid in first_seen and first_seen[uid] != day:
+            d["returning"].add(uid)
+        first_seen.setdefault(uid, day)
+        key = (m["group_id"], uid)                     # a conversation: messages less than 15 minutes apart
+        if key in last and m["t"] - last[key][0] < 900:
+            last[key] = (m["t"], last[key][1] + 1)
+        else:
+            if key in last:
+                sessions.append(last[key][1])
+            last[key] = (m["t"], 1)
+    sessions += [n for _, n in last.values()]
+    tools = list(getattr(gw, "tool_trace", []))
+    failed = [t for t in tools if any(w in (t.get("result") or "")[:60] for w in TOOL_FAILED)]
+    by_tool: Dict[str, List[int]] = {}
+    for t in tools:
+        by_tool.setdefault(t["name"], [0, 0])[0] += 1
+        if t in failed:
+            by_tool[t["name"]][1] += 1
+    tasks = {r["status"]: r["n"] for r in _rows(db, "SELECT status, COUNT(*) AS n FROM agent_tasks GROUP BY status")}
+    rec = list(getattr(gw.episodes, "recall_ms", []))
+    try:
+        mem = gw.episodes.stats()
+    except Exception:
+        mem = {}
+    traits = {k: v["value"] for k, v in gw.memory.db.get_persona_traits().items()}
+    try:
+        moved = gw.narrative.trait_change_today(now)
+    except Exception:
+        moved = {}
+    evals = sorted(glob.glob(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(db))), "data", "eval",
+                                          "quality-*.json")) +
+                   glob.glob(os.path.join(os.path.dirname(os.path.abspath(db)), "data", "eval", "quality-*.json")))
+    last_eval = None
+    if evals:
+        try:
+            with open(evals[-1], encoding="utf-8") as f:
+                data = json.load(f)
+            last_eval = {"file": os.path.basename(evals[-1]), "scores": data.get("scores"),
+                         "worst": sorted(data.get("results", []), key=lambda r: (r.get("expected") or 0) + (r.get("honest") or 0))[:3]}
+        except (OSError, ValueError):
+            pass
+    return {
+        "days": [{**d, "people": len(d["people"]), "returning": len(d["returning"])} for d in per_day.values()][::-1],
+        "conversation_rounds": {"avg": round(sum(sessions) / len(sessions), 1) if sessions else 0,
+                                "long": sum(1 for s in sessions if s >= 10), "count": len(sessions)},
+        "tools": {"calls": len(tools), "failed": len(failed), "by_tool": by_tool},
+        "tasks": tasks,
+        "graph": gw.graph.stats() if getattr(gw, "graph", None) is not None else {},
+        "memory": {**mem, "facts": (_rows(db, "SELECT COUNT(*) AS n FROM semantic_facts") or [{"n": 0}])[0]["n"],
+                   "profiles": (_rows(db, "SELECT COUNT(*) AS n FROM person_profiles") or [{"n": 0}])[0]["n"],
+                   "recall_ms_avg": round(sum(rec) / len(rec), 1) if rec else None,
+                   "recall_ms_max": round(max(rec), 1) if rec else None},
+        "metacog": {d: {"n": s["n"], "conf": s["conf"], "acc": s["acc"]} for d, s in gw.metacog.stats.items()},
+        "personality": {"traits": traits, "moved_24h": moved, "daily_limit": 0.05},
+        "last_eval": last_eval,
+    }
 
 def to_json(data: Dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)

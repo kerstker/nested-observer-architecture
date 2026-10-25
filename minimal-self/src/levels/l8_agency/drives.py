@@ -140,6 +140,10 @@ class DriveSystem:
     def choose(self, needs: Dict[str, float], energy: float, users: List[str],
                goal_value: Callable[[str, Optional[str]], float] = None) -> Option:
         opts = self.options(needs, energy, users, goal_value)
+        # Doing nothing has G = 0. An action expected to be worse than that is not a candidate: the
+        # softmax used to include them all, and with one option per person and need, many slightly
+        # negative options together outweighed waiting - she asked for food without being hungry.
+        opts = [o for o in opts if o.action == "wait" or o.score > 0]
         top = max(o.score for o in opts)
         weights = [math.exp((o.score - top) / self.temperature) for o in opts]
         return self.rng.choices(opts, weights=weights, k=1)[0]

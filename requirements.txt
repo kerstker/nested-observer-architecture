@@ -8,3 +8,5 @@ requests
 llama-cpp-python
 numpy
 ddgs>=9.16
+onnxruntime>=1.31
+tokenizers>=0.23

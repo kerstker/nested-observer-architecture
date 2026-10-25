@@ -13,6 +13,7 @@ class MemorySystem:
     """
     def __init__(self, db_path: str = "memory.sqlite"):
         self.db = MemoryDatabase(db_path)
+        self.self_ids = set()        # her own QQ number(s): shown as herself, not as a stranger
         
         # Async Write Queue
         self.write_queue = queue.Queue()
@@ -142,7 +143,12 @@ class MemorySystem:
                 relations_lines = []
                 for e in snapshot:
                     other = e["user_id_b"] if e["user_id_a"] == user_id else e["user_id_a"]
-                    relations_lines.append(f"- {user_name} <-> {other} (权重 {e['weight']:.1f}, 情感 {e['sentiment']:.2f})")
+                    if other in self.self_ids:
+                        other_name = "我（乃爱）"
+                    else:
+                        u = self._get_user_cached(other)
+                        other_name = (u or {}).get("nickname") or f"QQ {other}"
+                    relations_lines.append(f"- {user_name} 和 {other_name}：互动 {e['weight']:.0f} 次，气氛 {e['sentiment']:+.2f}")
                 relations_text = "\n".join(relations_lines)
         
         return f"""

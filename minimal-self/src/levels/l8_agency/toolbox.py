@@ -26,6 +26,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
 from src.core import clock
+from src.levels.l7_tom.hearsay import is_sensitive
 
 MAX_RESULT = 2500
 WEEKDAYS = "一二三四五六日"
@@ -159,10 +160,14 @@ def _recall(gw, ctx: ToolContext, args):
     if not query:
         return "要回忆什么？query 是空的。"
     parts = []
-    eps = gw.episodes.recall(query, user_id=ctx.user_id, k=4, group_id=ctx.group_id)
+    # A deliberate effort to remember: the archive is searched too (and what is found comes back)
+    eps = gw.episodes.recall(query, user_id=ctx.user_id, k=4, group_id=ctx.group_id, deep=True)
     if eps:
         parts.append("[经历]\n" + "\n".join(f"- {e['content'][:200]}" for e in eps))
-    facts = gw.semantic.for_user(ctx.user_id, limit=5)
+    profile = gw.profiles.get(ctx.user_id) if getattr(gw, "profiles", None) else None
+    if profile:
+        parts.append(f"[我对 {ctx.nickname or ctx.user_id} 的印象]\n{profile}")
+    facts = gw.semantic.relevant(ctx.user_id, query, k=5) or gw.semantic.for_user(ctx.user_id, limit=5)
     if facts:
         parts.append(f"[关于 {ctx.nickname or ctx.user_id} 我记得的事]\n" + "\n".join(f"- {f['fact']}" for f in facts))
     know = gw.knowledge.recall(query)
@@ -170,10 +175,28 @@ def _recall(gw, ctx: ToolContext, args):
         parts.append("[知识]\n" + know)
     return "\n".join(parts) if parts else f"关于「{query}」什么也没想起来。不要编，如实说不记得。"
 
+def _who_is(gw, ctx: ToolContext, args):
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return "要查谁/什么？name 是空的。"
+    graph = getattr(gw, "graph", None)
+    if graph is None:
+        return "我还没有整理过人和事之间的关系。"
+    eids = graph.mentioned(name, ctx.user_id, ctx.group_id)
+    if not eids:
+        return f"关于「{name}」，我没记下什么（在这里能说的范围内）。不要编。"
+    rels = graph.relations_of(eids, ctx.user_id, ctx.group_id, hops=2, limit=25)
+    if not rels:
+        return f"我知道有「{name}」，但没记下 ta 和别人/别的事的关系。"
+    return (f"关于「{name}」我记下的关系（括号里是谁说的、什么时候；以新的、来源直接的为准）：\n" + graph.render(rels))
+
 def _remember(gw, ctx: ToolContext, args):
     content = str(args.get("content") or "").strip()
     if not content:
         return "要记住什么？content 是空的。"
+    if is_sensitive(content) and ctx.group_id is not None:
+        return ("这是关于人的敏感说法（性取向、疾病、私生活之类），不记，也不传。"
+                "按你的原则回应：不附和、不转述，可以让 ta 自己去问本人。")
     if args.get("about_person", True) and ctx.user_id not in (None, "", "self"):
         visibility = "private" if ctx.group_id is None else "group"
         gw.semantic.add(ctx.user_id, content[:200], [], confidence=0.8, visibility=visibility)
@@ -330,6 +353,10 @@ def _qq_ready(gw, ctx):
 TOOLS: List[Tool] = [
     Tool("recall", "回忆：在我的经历、关于对方的记忆和知识库里找和 query 有关的内容。被问到以前的事、对方的事时先用它，而不是猜。",
          _props(["query"], query=_s("要回忆的内容，几个关键词")), _recall),
+    Tool("who_is", "查我记下的某个人/宠物/东西/事情和别的人和事的关系（谁是谁的什么、谁说过什么、计划和近况），带来源。"
+         "被问到某人某事、要把几个人的话连起来想时用。",
+         _props(["name"], name=_s("名字，比如 白羽、团子、小林的婚礼")), _who_is,
+         lambda gw, ctx: getattr(gw, "graph", None) is not None),
     Tool("remember", "记住一件值得长期记住的事。about_person=true 记成关于当前这个人的事（喜好、近况、约定），false 记进通用知识库。",
          _props(["content"], content=_s("要记住的内容，一句完整的话"),
                 about_person={"type": "boolean", "description": "是不是关于正在和我说话的这个人"},
@@ -360,7 +387,7 @@ TOOLS: List[Tool] = [
 
 # The old text protocol and some names models like to use
 ALIASES = {"recall": "recall", "memorize": "remember", "remember": "remember", "search": "web_search",
-           "web_search": "web_search", "read": "read_webpage", "read_webpage": "read_webpage", "open_url": "read_webpage",
+           "web_search": "web_search", "who_is": "who_is", "read": "read_webpage", "read_webpage": "read_webpage", "open_url": "read_webpage",
            "fetch": "read_webpage", "schedule": "schedule_task", "schedule_task": "schedule_task", "remind": "schedule_task",
            "list_tasks": "list_tasks", "cancel_task": "cancel_task", "group_history": "group_history",
            "member_info": "member_info", "evolve": "evolve"}

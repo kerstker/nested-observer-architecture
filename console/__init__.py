@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from src.core import clock
-from .state import snapshot, mind, trace, trace_call, social, memory, history, to_json
+from .state import snapshot, mind, trace, trace_call, social, memory, history, metrics, to_json
 
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 PAGE = os.path.join(os.path.dirname(__file__), "index.html")
@@ -184,6 +184,11 @@ def create_console_router(gw, token: str = None) -> APIRouter:
     async def history_view(request: Request, hours: float = 24.0):
         authorize(request)
         return json_response(await asyncio.to_thread(history, gw, max(0.1, min(hours, 24 * 30))))
+
+    @router.get("/api/metrics")
+    async def metrics_view(request: Request):
+        authorize(request)
+        return json_response(await asyncio.to_thread(metrics, gw))
 
     @router.get("/api/logs")
     async def logs_view(request: Request, after: int = 0, level: str = ""):

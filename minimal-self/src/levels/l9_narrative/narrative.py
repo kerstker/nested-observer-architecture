@@ -4,11 +4,12 @@ import sqlite3
 from typing import List, Dict, Any, Callable, Optional
 from src.core import clock
 from src.levels.l2_memory.layers import EpisodicMemory, SemanticMemory, Autobiography
+from src.levels.l7_tom.hearsay import is_sensitive
 
 logger = logging.getLogger(__name__)
 
 TRAIT_MIN, TRAIT_MAX = 0.1, 0.9
-MAX_STEP = 0.05   # largest change of one trait in one night
+MAX_STEP = 0.05   # largest net change of one trait in one day (however often she consolidates)
 
 def _clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
@@ -97,6 +98,7 @@ class NarrativeSelf:
 }}
 注意：facts 是「你以后可以当众说出来的概括」，比如“ta 最近在折腾显卡”“ta 换过号”。
 不要把私聊里的原话、隐私细节、住址、密码之类写进 facts。
+也不要把别人说的关于某人的敏感说法（性取向、疾病、私生活、犯罪、欠债之类）写进 facts——那是传闻，不是事实。
 <|im_end|>
 <|im_start|>assistant
 """
@@ -107,6 +109,7 @@ class NarrativeSelf:
             logger.error(f"[Dream] Reflection failed: {e}")
             return out
         ids = {e["id"] for e in salient}
+        by_id = {e["id"]: e for e in salient}
         diary = result.get("diary") or result.get("reply")
         if diary:
             out["diary"] = diary
@@ -119,8 +122,10 @@ class NarrativeSelf:
             if not isinstance(f, dict):
                 continue
             cited = [i for i in f.get("episodes") or [] if isinstance(i, int) and i in ids]
-            if f.get("fact") and f.get("user_id") and cited:
-                self.semantic.add(str(f["user_id"]), f["fact"], cited)
+            if f.get("fact") and f.get("user_id") and cited and not is_sensitive(f["fact"]):
+                # Learned only in a private chat: it stays private (shareable facts come from where others heard it too)
+                private = all((by_id.get(i) or {}).get("visibility") == "private" for i in cited)
+                self.semantic.add(str(f["user_id"]), f["fact"], cited, visibility="private" if private else "public")
                 kept.append(f["fact"])
         out["facts"] = kept
         # Only phrases she actually heard several people use; nothing invented
@@ -142,6 +147,18 @@ class NarrativeSelf:
                 out["new_goal"] = g
         return out
 
+    def trait_change_today(self, now: float) -> Dict[str, float]:
+        """Net change of each trait over the last 24 hours."""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            rows = conn.execute("SELECT trait, SUM(new - old) FROM trait_changes WHERE t > ? GROUP BY trait",
+                                (now - 86400,)).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
+        finally:
+            conn.close()
+        return {trait: total or 0.0 for trait, total in rows}
+
     def drift_traits(self, eps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         social = [e for e in eps if e["kind"] in ("dialogue", "proactive") and e["user_id"] not in (None, "self")]
         searches = [e for e in eps if e["kind"] == "search"]
@@ -162,12 +179,19 @@ class NarrativeSelf:
                               [e["id"] for e in (searches or eps)], f"今天主动探索了 {len(searches)} 次"))
 
         traits = self.persona_db.get_persona_traits()
+        # The limit is per day, not per consolidation: consolidation also runs while awake whenever
+        # enough has happened (up to hourly), and a per-run limit let a single day push a trait
+        # all the way to its bound. What already moved in the last 24 hours counts against today.
+        spent = self.trait_change_today(clock.now())
         changes = []
         for trait, delta, evidence, reason in proposals:
             if trait not in traits or not evidence:
                 continue
             old = traits[trait]["value"]
-            new = _clamp(old + _clamp(delta, -MAX_STEP, MAX_STEP), TRAIT_MIN, TRAIT_MAX)
+            used = spent.get(trait, 0.0)
+            # Over budget already: no further in that direction - but never a forced swing back
+            delta = _clamp(delta, min(0.0, -MAX_STEP - used), max(0.0, MAX_STEP - used))
+            new = _clamp(old + delta, TRAIT_MIN, TRAIT_MAX)
             if abs(new - old) < 1e-6:
                 continue
             self.persona_db.update_persona_trait(trait, new)

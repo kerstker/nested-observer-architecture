@@ -49,6 +49,15 @@ class StickerMemory:
             first_seen REAL,
             last_seen REAL
         )''')
+        # Vectors from another embedding model are not comparable: re-embed the occasions
+        if "emb_model" not in [r[1] for r in conn.execute("PRAGMA table_info(stickers)")]:
+            conn.execute("ALTER TABLE stickers ADD COLUMN emb_model TEXT")
+        stale = conn.execute("SELECT id, contexts FROM stickers WHERE contexts IS NOT NULL AND contexts != '[]' "
+                             "AND (emb_model IS NULL OR emb_model != ?)", (embedder.model_id,)).fetchall()
+        if stale:
+            vecs = embedder.embed_many([" ".join(json.loads(c)) for _, c in stale])
+            conn.executemany("UPDATE stickers SET embedding = ?, emb_model = ? WHERE id = ?",
+                             [(Embedder.to_bytes(v), embedder.model_id, sid) for v, (sid, _) in zip(vecs, stale)])
         conn.commit()
         conn.close()
 
@@ -132,9 +141,10 @@ class StickerMemory:
         if user not in users and len(users) < 20:
             users.append(user)
         emb = self.embedder.embed(" ".join(contexts)) if contexts else None
-        conn.execute("UPDATE stickers SET contexts = ?, users = ?, uses = ?, last_seen = ?, embedding = ? WHERE id = ?",
+        conn.execute("UPDATE stickers SET contexts = ?, users = ?, uses = ?, last_seen = ?, embedding = ?, emb_model = ? "
+                     "WHERE id = ?",
                      (json.dumps(contexts, ensure_ascii=False), json.dumps(users, ensure_ascii=False), uses + 1, now,
-                      Embedder.to_bytes(emb) if emb is not None else None, sticker_id))
+                      Embedder.to_bytes(emb) if emb is not None else None, self.embedder.model_id, sticker_id))
         conn.commit()
         conn.close()
         return sticker_id
@@ -150,7 +160,7 @@ class StickerMemory:
         q = self.embedder.embed(text)
         scored = []
         for r in rows:
-            sim = float(np.dot(q, Embedder.from_bytes(r["embedding"])))
+            sim = self.embedder.similarity(q, Embedder.from_bytes(r["embedding"]))
             if sim <= 0.05:
                 continue
             scored.append((sim * (0.5 + r["q"]) * math.log1p(r["uses"]), r))

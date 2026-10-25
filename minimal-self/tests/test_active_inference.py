@@ -89,5 +89,15 @@ class TestActiveInferenceDrives(unittest.TestCase):
         DriveSystem(path)                                     # migrating twice does not double the evidence
         self.assertEqual(d.belief("social", "chat", "A")[2], 20)
 
+class TestNothingToGain(unittest.TestCase):
+    def test_many_slightly_bad_options_do_not_outweigh_waiting(self):
+        d = DriveSystem(db_path(), rng=random.Random(0))
+        users = [f"u{i}" for i in range(12)]
+        calm = {"hunger": 0.0, "social": 0.0, "curiosity": 0.0}
+        chosen = {d.choose(calm, 90.0, users).action for _ in range(200)}
+        self.assertEqual(chosen, {"wait"})
+        lonely = {"hunger": 0.0, "social": 0.9, "curiosity": 0.0}
+        self.assertIn("chat", {d.choose(lonely, 90.0, users).action for _ in range(50)})
+
 if __name__ == "__main__":
     unittest.main()

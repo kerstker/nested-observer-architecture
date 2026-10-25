@@ -256,7 +256,10 @@ senses.caption_engine = vision_engine
 
 # Initialize Level 1-10 Framework
 event_bus = EventBus()
-global_workspace = GlobalWorkspace(event_bus, inference_engine)
+from src.levels.l2_memory.embedding import Embedder, default_model_dir
+# Recall by meaning: the local bge-small-zh model (CPU); without it, recall falls back to wording only
+global_workspace = GlobalWorkspace(event_bus, inference_engine,
+                                   embedder=Embedder(model_dir=config.get("EMBED_MODEL_DIR") or default_model_dir()))
 # 内心念头的最小间隔（秒）。用付费 API 时调大，否则念头会成为主要开销
 global_workspace.idle_thought_interval = config.get('IDLE_THOUGHT_INTERVAL', 60)
 # 她可以在没人叫她时自己开口的群（其他群她只听、被叫到才可能回）

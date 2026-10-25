@@ -43,7 +43,9 @@ def main():
         engine = ScriptedLLM("喵～我在听呢，你今天过得怎么样？")
 
     os.makedirs(os.path.dirname(os.path.abspath(args.db)), exist_ok=True)
-    gw = GlobalWorkspace(EventBus(), engine, db_path=args.db)
+    from src.levels.l2_memory.embedding import Embedder, default_model_dir
+    gw = GlobalWorkspace(EventBus(), engine, db_path=args.db,
+                         embedder=Embedder(model_dir=default_model_dir()) if args.real else None)
     if args.real:
         gw.idle_thought_interval = config.get("IDLE_THOUGHT_INTERVAL", 600)   # paid calls: keep inner thoughts sparse
     else:

@@ -219,6 +219,11 @@
       <ul class="list" id="calls" style="max-height:900px"></ul>
     </section>
     <section>
+      <h2>上一次回复时她看到的人物关系</h2>
+      <div class="muted" id="related-meta"></div>
+      <pre class="prompt" id="related"></pre>
+    </section>
+    <section>
       <h2>工具调用 · 她用工具做了什么（回复中 / 执行任务时）</h2>
       <ul class="list" id="tool-calls" style="max-height:520px"></ul>
     </section>
@@ -388,6 +393,15 @@
 </main>
 
 <main data-pane="system" class="two" hidden>
+  <section class="wide">
+    <h2>健康指标 · 她过得好不好（最近 7 天）</h2>
+    <div class="stat" id="health-stats"></div>
+    <div class="table-wrap" style="margin-top:10px"><table>
+      <thead><tr><th>日期</th><th class="num">听到</th><th class="num">说了</th><th class="num">人</th><th class="num">回头的人</th></tr></thead>
+      <tbody id="health-days"></tbody>
+    </table></div>
+    <dl class="kv" id="health-kv" style="margin-top:10px"></dl>
+  </section>
   <div class="col">
     <section>
       <h2>感官与后端</h2>
@@ -755,7 +769,7 @@ loaders.thinking = async () => {
   $("trace-summary").textContent = t.calls.length
     ? `最近 ${t.calls.length} 次 · 平均 ${(secs.reduce((a, b) => a + b, 0) / secs.length).toFixed(1)} 秒 · 失败 ${t.calls.filter((c) => c.error).length}` : "";
   const sig = filter.value + "|" + calls.map((c) => c.t).join(",");
-  if (sig === lastCallsSig) { renderTools(t.tools || []); renderAttention(m); return; }
+  if (sig === lastCallsSig) { renderTools(t.tools || []); renderRelated(t.last_related); renderAttention(m); return; }
   lastCallsSig = sig;
   fill("calls", calls.map((c) => {
     const d = el("details", {},
@@ -778,8 +792,13 @@ loaders.thinking = async () => {
     return el("li", {}, d);
   }), "还没有调用过模型");
   renderTools(t.tools || []);
+  renderRelated(t.last_related);
   renderAttention(m);
 };
+function renderRelated(r) {
+  $("related-meta").textContent = r ? `${ago(r.t)} · ${r.user}${r.group_id ? "（群 " + r.group_id + "）" : "（私聊）"}：${r.text}` : "";
+  $("related").textContent = r ? (r.related || "（这句话没提到她认识的人或事）") : "还没有回复过";
+}
 const TOOLNAME = { recall: "回忆", remember: "记住", web_search: "搜索", read_webpage: "读网页", schedule_task: "记任务",
                    list_tasks: "看任务", cancel_task: "取消任务", group_history: "群聊记录", member_info: "群成员资料", evolve: "改造自己" };
 function renderTools(tools) {
@@ -1023,13 +1042,20 @@ loaders.memory = async (q) => {
   $("mem-stats").replaceChildren(
     el("div", {}, el("b", {}, (m.db_bytes / 1048576).toFixed(1) + " MB"), el("span", {}, "数据库大小")),
     el("div", {}, el("b", {}, m.unconsolidated), el("span", {}, "还没整理的经历")),
+    ...(m.graph ? [el("div", {}, el("b", {}, m.graph.entities), el("span", {}, "认识的人和事")),
+                   el("div", {}, el("b", {}, (m.graph.relations_current || 0) + (m.graph.relations_disputed || 0)), el("span", {}, "当前的关系")),
+                   el("div", {}, el("b", {}, m.graph.episodes_unread), el("span", {}, "还没读关系的经历"))] : []),
     ...Object.entries(m.counts).map(([k, v]) => el("div", {}, el("b", {}, v), el("span", {}, TABLE[k] || k))));
   fill("facts", m.facts.map((f) => memItem("事实", f)), "还没有蒸馏出事实");
   fill("autobio-history", m.autobiography.map((a) => el("li", {}, a.text, el("div", { class: "when" }, ago(a.t)))), "还没有");
   if (m.results) {
     const groups = [["经历", m.results.episodes], ["事实", m.results.facts], ["对话", m.results.interactions], ["旧记忆", m.results.memories]];
+    const rels = m.relations || [];
     const total = groups.reduce((a, [, r]) => a + r.length, 0);
-    $("mem-results").replaceChildren(el("div", { class: "muted" }, `「${m.query}」共 ${total} 条`),
+    $("mem-results").replaceChildren(el("div", { class: "muted" }, `「${m.query}」共 ${total} 条，关系 ${rels.length} 条`),
+      ...(rels.length ? [el("div", {}, el("h2", {}, `人物关系（${rels.length}）`), el("ul", { class: "list" },
+        ...rels.map((r) => el("li", {}, el("span", { class: "chip " + (r.status === "current" ? "src-continuity" : r.status === "disputed" ? "neg" : "src-inner_speech") },
+          { current: "当前", superseded: "已过时", disputed: "有分歧" }[r.status] || r.status), r.line, el("div", { class: "when" }, r.scope)))))] : []),
       ...groups.filter(([, r]) => r.length).map(([name, rows]) =>
         el("div", {}, el("h2", {}, `${name}（${rows.length}）`), el("ul", { class: "list" }, ...rows.map((r) => memItem(name, r))))));
   }
@@ -1038,8 +1064,32 @@ $("mem-search").addEventListener("submit", (ev) => { ev.preventDefault();
   loaders.memory($("mem-q").value.trim()).catch((err) => showError(err.message)); });
 
 // ---- 系统与日志 --------------------------------------------------------------------------
-let logSeq = 0, logPaused = false;
+let logSeq = 0, logPaused = false, healthAt = 0;
+async function loadHealth() {
+  const h = await api("metrics");
+  const t = h.tools, m = h.memory, ev = h.last_eval;
+  const box = (v, label) => el("div", {}, el("b", {}, v == null ? "—" : String(v)), el("span", {}, label));
+  $("health-stats").replaceChildren(
+    box(h.conversation_rounds.avg, "平均每段对话几句"),
+    box(h.conversation_rounds.long, "聊到 10 句以上的对话"),
+    box(t.calls ? Math.round(100 * (1 - t.failed / t.calls)) + "%" : null, `工具成功率（${t.calls} 次）`),
+    box(`${h.tasks.done || 0}/${(h.tasks.done || 0) + (h.tasks.failed || 0)}`, "任务兑现 / 到期"),
+    box(m.recall_ms_avg != null ? m.recall_ms_avg + " ms" : null, "一次回忆平均耗时"),
+    box(`${m.active ?? "—"} / ${m.episodes ?? "—"}`, "日常记忆 / 全部经历"),
+    box(m.profiles, "有印象画像的人"),
+    box(ev && ev.scores ? `${ev.scores.natural}·${ev.scores.expected}·${ev.scores.honest}` : null, "最近评估：自然·达标·诚实"));
+  fill("health-days", h.days.map((d) => el("tr", {}, el("td", {}, d.day), el("td", { class: "num" }, d.heard),
+    el("td", { class: "num" }, d.said), el("td", { class: "num" }, d.people), el("td", { class: "num" }, d.returning))), "最近没有对话");
+  const moved = Object.entries(h.personality.moved_24h || {}).map(([k, v]) => `${TRAIT[k] || k} ${v >= 0 ? "+" : ""}${v.toFixed(3)}`);
+  kvs("health-kv", [
+    ["工具明细", Object.entries(t.by_tool).map(([k, [n, f]]) => `${TOOLNAME[k] || k} ${n}${f ? "（失败 " + f + "）" : ""}`).join("、") || "还没用过"],
+    ["人格 24 小时变化", (moved.join("、") || "没变") + `（每天上限 ±${h.personality.daily_limit}）`],
+    ["记忆模型", `${m.model || "—"} · 事实 ${m.facts} 条 · 回忆最慢 ${m.recall_ms_max ?? "—"} ms`],
+    ["最近评估", ev ? `${ev.file}；最差：` + ev.worst.map((r) => `${r.name}（${r.reason}）`).join("；") : "还没跑过：python scripts/evaluate_quality.py"],
+  ]);
+}
 loaders.system = async () => {
+  if (Date.now() - healthAt > 15000) { healthAt = Date.now(); loadHealth().catch((err) => tabError("system", err.message)); }
   if (state) {
     const ab = state.abilities || {};
     const sense = (k, name) => el("span", {}, el("span", { class: "dot " + (ab[k] ? "on" : "off") }), name + (ab[k] ? " 可用" : " 不可用"));

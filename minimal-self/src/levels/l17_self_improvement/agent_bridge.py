@@ -65,12 +65,9 @@ TASK_PREAMBLE = """你在一份「乃爱(Noa)」数字生命项目的副本工�
 1. 只允许修改 minimal-self/src/levels/** 下的代码、以及 console/ 下的界面。禁止修改：config.json、napcat/**、memory.sqlite、data/**、测试文件、以及任何密钥。
 2. 不许引入新的第三方依赖。
 3. 改动要小：超过 300 行的 diff 会被拒绝。
-4. 改完必须运行测试：
-   cd minimal-self
-   set PYTHONPATH=%CD%
-   python -m unittest discover -s tests -t .   （如果这条跑不起来，就逐个运行 tests/test_*.py）
+4. 不要运行 shell 命令、也不要运行测试：这个环境里的 shell 可能不可用。修改完直接用文字说明即可，测试由调用方在副本里统一跑。
 5. 不要修改测试来让它变绿。
-6. 最后用中文写一段 150 字以内的说明：你改了什么、为什么、验证结果如何。
+6. 最后用中文写一段 150 字以内的说明：你改了什么、为什么、需要注意什么。
 
 任务：
 """

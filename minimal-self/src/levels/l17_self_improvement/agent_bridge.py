@@ -307,8 +307,12 @@ class DshAgentBridge:
         try:
             if self.proposals_today() >= self.max_per_day:
                 raise RuntimeError("今天的改造额度已经用完了")
-            if not (os.path.exists(self.dsh_exe) and os.path.exists(self.dsh_bin)):
-                raise RuntimeError("找不到 DSH 可执行文件，检查 config 里的 DSH_EXE / DSH_BIN")
+            if not os.path.exists(self.dsh_exe):
+                raise RuntimeError(f"找不到 DSH 可执行文件：{self.dsh_exe}")
+            # The CLI entry lives inside app.asar; a plain os.path.exists() cannot see it,
+            # but the Electron binary resolves asar paths for us.
+            if not (os.path.exists(self.dsh_bin) or ".asar" in self.dsh_bin.lower()):
+                raise RuntimeError(f"找不到 DSH CLI 入口：{self.dsh_bin}")
             os.makedirs(prop_dir, exist_ok=True)
             self._copy_repo(workspace)
             self._git(workspace, "init", "-q")

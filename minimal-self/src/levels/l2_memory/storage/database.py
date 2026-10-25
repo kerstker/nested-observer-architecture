@@ -261,14 +261,15 @@ class MemoryDatabase:
             # 2. What was said in this group (by anyone, for context)
             # But retrieving ALL group chat might be too noisy if limit is small.
             # Let's prioritize: User's interactions + Current Group interactions.
-            c.execute('''SELECT * FROM interactions 
+            # The *latest* `limit` messages, oldest first (this used to return the oldest of the week)
+            c.execute('''SELECT * FROM (SELECT * FROM interactions
                 WHERE (user_id = ? OR group_id = ?) AND timestamp > ?
-                ORDER BY timestamp ASC LIMIT ?''', (user_id, group_id, cutoff, limit))
+                ORDER BY timestamp DESC, id DESC LIMIT ?) ORDER BY timestamp ASC, id ASC''', (user_id, group_id, cutoff, limit))
         else:
             # Private chat: Just user's history
-            c.execute('''SELECT * FROM interactions 
+            c.execute('''SELECT * FROM (SELECT * FROM interactions
                 WHERE user_id = ? AND timestamp > ?
-                ORDER BY timestamp ASC LIMIT ?''', (user_id, cutoff, limit))
+                ORDER BY timestamp DESC, id DESC LIMIT ?) ORDER BY timestamp ASC, id ASC''', (user_id, cutoff, limit))
         
         rows = c.fetchall()
         conn.close()

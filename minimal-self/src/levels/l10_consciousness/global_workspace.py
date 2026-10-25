@@ -24,6 +24,7 @@ from ...levels.l2_memory.memory import MemorySystem
 from ...levels.l2_memory.embedding import Embedder
 from ...levels.l2_memory.layers import EpisodicMemory, SemanticMemory, Autobiography
 from ...levels.l2_memory.profiles import PersonProfiles
+from ...levels.l2_memory.chatlog import ChatLog, chat_key
 from ...levels.l2_memory.graph import RelationGraph, PUBLIC as GRAPH_PUBLIC, SELF as GRAPH_SELF
 from ...levels.l3_metabolism.metabolism import Metabolism
 from ...levels.l4_emotion.emotion import EmotionEngine, EmotionState
@@ -103,6 +104,7 @@ class GlobalWorkspace:
         self.autobiography = Autobiography(db_path)
         self.profiles = PersonProfiles(db_path)
         self.graph = RelationGraph(db_path)
+        self.chatlog = ChatLog(db_path)
         self.narrative = NarrativeSelf(db_path, self.episodes, self.semantic, self.autobiography, self.memory.db)
         # Her own voice as a few style anchors (no training, no GPU): what she sounded like at her best
         self.style_anchors = StyleAnchors(db_path)
@@ -511,7 +513,8 @@ class GlobalWorkspace:
                 self.last_consolidation = now
                 await asyncio.to_thread(self._dream_process)
 
-        # Who-is-related-to-whom keeps up with conversation on its own (a few batches every half hour)
+        # Who-is-related-to-whom keeps up with conversation on its own (a few batches every half hour),
+        # and stickers she collected get looked at once, so she knows what she is sending
         if self.inference_engine and now - self.last_graph_update >= 1800:
             self.last_graph_update = now
             try:
@@ -519,6 +522,18 @@ class GlobalWorkspace:
                     await asyncio.to_thread(self.graph.extract, self._llm, self._names_in_chat, 12, 3)
             except Exception as e:
                 logger.error(f"[Graph] update failed: {e}")
+            if getattr(self.inference_engine, "supports_images", False):
+                try:
+                    await asyncio.to_thread(self.stickers.describe_missing, self._describe_sticker, 10)
+                except Exception as e:
+                    logger.error(f"[Stickers] describing failed: {e}")
+
+    def _describe_sticker(self, png: bytes) -> Optional[str]:
+        prompt = ("<|im_start|>user\n这是一张 QQ 表情包。用一句话（30 字以内）说清：画的是什么、表达什么情绪或意思；"
+                  "图里有字就照写出来。只输出这句话。<|im_end|>\n<|im_start|>assistant\n")
+        out = self._llm(prompt, max_tokens=80, temperature=0.2, media=[{"data": png, "mime": "image/png"}]) or {}
+        text = (out.get("reply") or "").strip().strip("“”\"")
+        return text or None
 
     # ------------------------------------------------------------------
     # People and things: who she is, who is who, and how they relate
@@ -920,6 +935,7 @@ class GlobalWorkspace:
             item = {"type": "proactive", "content": message}
             if target:
                 item["target"] = {"type": "private", "id": target}
+                self.record_own(message, target, None)
                 self.user_models.on_noa_message(target, clock.now(), "proactive", expects_reply=True, need=need)
                 self.episodes.add(f"我主动找 {name}：{message}", kind="proactive", user_id=target,
                                   valence=self.emotion.valence(), arousal=self.emotion.arousal())
@@ -1263,7 +1279,8 @@ class GlobalWorkspace:
 
     async def hear(self, text: str, user_id: str, nickname: str = "User", group_id: str = None,
                    addressed: bool = True, stickers: List[Dict[str, Any]] = None,
-                   aimed_elsewhere: bool = False, media: List[Dict[str, Any]] = None) -> Optional[str]:
+                   aimed_elsewhere: bool = False, media: List[Dict[str, Any]] = None,
+                   message_id: str = None, reply_to: str = None, mentions: List[str] = None) -> Optional[str]:
         """
         Every message she can perceive comes through here. She hears it; whether she
         says anything - and what - is her own choice, made from her state and experience.
@@ -1277,8 +1294,18 @@ class GlobalWorkspace:
         chat = group_id or f"u:{user_id}"
         stickers = stickers or []
         typed = bool(text.strip())
-        if not typed and stickers:
+        said = text                       # what was typed, before stickers are described in it
+        # A sticker she already knows reads as what it shows, not as "a sticker" or a few OCR'd words
+        known = [l for l in (self.stickers.looks_of_segment(s) for s in stickers) if l]
+        if known:
+            seen = "".join(f"[表情包：{l}]" for l in known)
+            text = re.sub(r"\[表情包[:：][^\]]*\]", "", text).strip() + seen if typed else seen
+        elif not typed and stickers:
             text = "（发了一个表情）"
+        # Everything she perceives goes into the conversation as it happened - before she decides
+        # anything - so that later she can follow who said what, even when it was not said to her
+        log_id = self.chatlog.record(chat_key(user_id, group_id), user_id, nickname, text, message_id=message_id,
+                                     reply_to=reply_to, mentions=mentions or (), addressed=addressed)
 
         # Not named, but carrying on the conversation she is in: for her, that is being talked to
         continuing = (not addressed and group_id is not None and not aimed_elsewhere
@@ -1292,7 +1319,7 @@ class GlobalWorkspace:
         # Collect stickers: what they mean is what was being said when people used them
         if stickers:
             if typed:
-                context = text
+                context = re.sub(r"\[表情包[:：][^\]]*\]", "", said).strip() or said
             elif group_id:
                 prev = self.group_language.recent_lines(group_id, 1)
                 context = prev[0].split("：", 1)[-1] if prev else ""
@@ -1376,7 +1403,10 @@ class GlobalWorkspace:
                 return None
 
         reply = await self.process_input(text, user_id=user_id, nickname=nickname, group_id=group_id,
-                                         addressed=addressed, media=media)
+                                         addressed=addressed, media=media, log_id=log_id)
+        if reply:
+            self.chatlog.record(chat_key(user_id, group_id), "self", "乃爱", reply, is_self=True,
+                                reply_to=message_id if group_id else None)
         if not reply:
             self._decide("silent", group_id, nickname, "看到了，但选择不回" if addressed else "想了想，没开口", text)
             if addressed:
@@ -1551,6 +1581,17 @@ class GlobalWorkspace:
             value = 0.5
         self.stickers.reward(last[0], value)
 
+    def render_own(self, text: str) -> str:
+        """Her own words as she reads them back: a sticker she sent is what it shows, not its number."""
+        def sticker(m):
+            looks = self.stickers.looks(int(m.group(1)))
+            return f"[发了表情：{looks}]" if looks else "[发了一个表情]"
+        return re.sub(r"\[表情:(\d+)\]", sticker, text)
+
+    def record_own(self, text: str, user_id: str = None, group_id: str = None, t: float = None):
+        """Something she said outside a reply (proactive message, task result, a test's setup)."""
+        self.chatlog.record(chat_key(user_id, group_id), "self", "乃爱", text, t=t, is_self=True)
+
     def render_message(self, part: str):
         """One planned message -> what goes to QQ: plain text, or a sticker segment. None to skip."""
         m = re.fullmatch(r"\s*\[表情:(\d+)\]\s*", part)
@@ -1646,7 +1687,7 @@ class GlobalWorkspace:
         return 0.0 if energy >= 50 else min(30.0, (50 - energy) * 0.6)
 
     async def process_input(self, user_input: str, user_id: str = "unknown", nickname: str = "User", group_id: str = None,
-                            addressed: bool = True, media: List[Dict[str, Any]] = None) -> str:
+                            addressed: bool = True, media: List[Dict[str, Any]] = None, log_id: int = None) -> str:
         """
         Process user input through the hierarchy:
         perception -> appraisal & prediction error -> workspace competition ->
@@ -1725,7 +1766,10 @@ class GlobalWorkspace:
         memories += [f"关于 {nickname}：{f['fact']}" for f in facts]
         # Always say whose fact it is: unlabelled, she pinned other people's facts on whoever was asking
         memories += [f"（我记得的，关于 {self._nickname(f['user_id'])}）{f['fact']}" for f in shared]
-        context = self.memory.retrieve(user_id, user_input, group_id=group_id, memories=memories)
+        # The conversation as it happened, from her side (the message she is answering is the user turn)
+        transcript = self.chatlog.transcript(chat_key(user_id, group_id), exclude_id=log_id, render_text=self.render_own)
+        context = self.memory.retrieve(user_id, user_input, group_id=group_id, memories=memories,
+                                       transcript=transcript or None)
         # Who and what the conversation is about, and how they relate - with who said so
         try:
             self._ensure_self()
@@ -2108,7 +2152,9 @@ If not, output "NO".
         meme_text = ", ".join(top_memes) if top_memes else "无"
 
         group_block = ""
-        if group_id:
+        # The chat log (in the context) already has the group's recent messages, in order and with her own;
+        # this older snippet only remains for chats without one
+        if group_id and "（这是这个聊天里最近的消息" not in context:
             lines = self.group_language.recent_lines(group_id, 12)
             if lines:
                 group_block = "[群里刚才在聊]（你听到的最近几句，大家平时就是这样说话的）\n" + "\n".join(lines) + "\n"
@@ -2116,8 +2162,9 @@ If not, output "NO".
         recent = " ".join(self.group_language.recent_lines(group_id, 3)) if group_id else ""
         options = self.stickers.relevant(f"{user_input} {recent}", k=6)
         if options:
-            sticker_block = "[我收藏的表情]（我看不到图，只记得大家一般在什么时候发它）\n" + "\n".join(
-                f"- [表情:{o['id']}] 大家常在「" + "」「".join(o["contexts"][-3:]) + "」的时候发" for o in options) + "\n"
+            sticker_block = "[我收藏的表情]（画的是什么，和大家一般在什么时候发它）\n" + "\n".join(
+                f"- [表情:{o['id']}] " + (f"画的是：{o['looks']}；" if o.get("looks") else "（还没看清画的是什么）")
+                + "大家常在「" + "」「".join(c[:24] for c in o["contexts"][-2:]) + "」的时候发" for o in options) + "\n"
             sticker_rule = "\n9. 想发表情就单独一行写 [表情:编号]（只能用上面列出的），也可以只发表情不说话；觉得不合适就不发。"
         if addressed:
             choice = "如果你此刻真的不想回（很生气、很累、或者觉得没什么好说），可以只输出：（不回）"
@@ -2393,6 +2440,7 @@ Response: 要发给 ta 的话（可以分几行，每行一条消息；不写动
                                       "target": {"type": "group", "id": gid}})
         else:
             self.output_queue.append({"type": "task", "content": message, "target": {"type": "private", "id": uid}})
+        self.record_own(message, uid, gid)
         self.memory.add_message(uid, "assistant", message, group_id=gid)
 
     async def _run_task(self, t: Dict[str, Any]):

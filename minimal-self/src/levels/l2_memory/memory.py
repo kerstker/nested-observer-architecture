@@ -75,7 +75,7 @@ class MemorySystem:
         return self.db.get_relationship(user_id)
 
     def retrieve(self, user_id: str, query: str = "", k: int = 3, group_id: str = None,
-                 memories: List[str] = None) -> str:
+                 memories: List[str] = None, transcript: str = None) -> str:
         """
         Retrieve relevant context for the conversation.
         Combines recent history and relevant long-term memories.
@@ -113,6 +113,10 @@ class MemorySystem:
             formatted_history.append(f"{label}: {content}")
             
         history_text = "\n".join(formatted_history)
+        if transcript:
+            # The chat log, from her side: everyone in the chat, her own lines, quotes, times
+            history_text = ("（这是这个聊天里最近的消息，按时间顺序；“我（乃爱）”是我自己说的，"
+                            "“引用 X 说的「…」”是在回复 X 的那句话）\n" + transcript)
         
         # 2. Get relevant long-term memories
         # Callers with meaning-based recall (episodic/semantic layers) pass `memories` directly
@@ -131,12 +135,16 @@ class MemorySystem:
         user_name = user['nickname'] if user else "Unknown"
         rel_text = f"Relationship: {rel['relation_type']} (Strength: {rel['strength']:.1f})"
         
-        # 4. Role Definition Block
-        other_participants = list(participants - {user_name, "Noa"})
-        others_text = ", ".join(other_participants) if other_participants else "None"
-        
+        # 4. Who is in this chat: from the chat log when there is one (it has everyone, not just
+        # the people she answered - "nobody else is here" made her ignore what she had just heard)
+        if transcript:
+            import re as _re
+            participants |= set(_re.findall(r"\] ([^：\n]+?)：", transcript))
+        other_participants = sorted(participants - {user_name, "Noa", "我（乃爱）"})
+        others_text = "、".join(other_participants) if other_participants else "没有别人"
+
         # 5. Group Relations Snapshot
-        relations_text = "None"
+        relations_text = "（没有）"
         if group_id:
             snapshot = self.db.get_user_neighbors(group_id, user_id, limit=5)
             if snapshot:
@@ -152,21 +160,17 @@ class MemorySystem:
                 relations_text = "\n".join(relations_lines)
         
         return f"""
-[Role Definition]
-- Me (Noa): You, the assistant.
-- Target User: {user_name} (The person you are replying to RIGHT NOW).
-- Other Participants: {others_text} (Context only).
+[这个聊天里有谁]
+- 我（乃爱）；现在跟我说话的是 {user_name}
+- 刚才也在说话的：{others_text}
+- 我和 {user_name}：{rel['relation_type']}（亲近程度 {rel['strength']:.1f}）
 
-[User Info]
-Target User: {user_name} ({user['username'] if user else '?'})
-{rel_text}
-
-[Group Relations Snapshot]
+[群里的人际关系]
 {relations_text}
 
-[Relevant Memories]
-{memory_text if memory_text else "None"}
+[以前的事]（从记忆里想起来的，不是刚才发生的）
+{memory_text if memory_text else "（没想起什么）"}
 
-[Recent Conversation]
+[Recent Conversation]（刚才的聊天，最后一条是最新的）
 {history_text}
 """

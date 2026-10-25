@@ -557,9 +557,11 @@ async def custom_message_handler(robot_id: str, message_event: MessageEvent):
             logger.error(f"Group analyzer error: {e}")
 
     # 4. 她听到了；回不回、回什么，是她的选择
+    mentions = ["self" if a == str(self_id) else a for a in at_ids]
     reply = await global_workspace.hear(plain_text, user_id=user_id, nickname=nickname,
                                         group_id=group_id, addressed=addressed, stickers=stickers,
-                                        aimed_elsewhere=aimed_elsewhere, media=media)
+                                        aimed_elsewhere=aimed_elsewhere, media=media, message_id=message_id,
+                                        reply_to=reply_ids[0] if reply_ids else None, mentions=mentions)
     await do_gestures(global_workspace.take_gestures(), user_id, group_id, message_id)
     if not reply:
         return
@@ -612,13 +614,21 @@ async def backfill_group(group_id: str, current_id: str):
         return
     lines = 0
     for m in messages:
-        if str(m.get("message_id")) == current_id or str(m.get("user_id")) == str(qq.self_id):
+        if str(m.get("message_id")) == current_id:
             continue
+        mine = str(m.get("user_id")) == str(qq.self_id)
         sender = m.get("sender") or {}
-        text = extract_plain_text(m)
+        try:
+            text = await qq.perceive(m.get("message") or [], names=global_workspace._nickname)   # quotes, @, stickers
+        except Exception:
+            text = extract_plain_text(m)
         if text:
-            global_workspace.group_language.observe(group_id, sender.get("card") or sender.get("nickname") or "某人",
-                                                    text, learn=False)
+            name = "乃爱" if mine else (sender.get("card") or sender.get("nickname") or "某人")
+            if not mine:
+                global_workspace.group_language.observe(group_id, name, text, learn=False)
+            # What was said before she was listening goes into the conversation she will read (hers too)
+            global_workspace.chatlog.record(f"g:{group_id}", str(m.get("user_id")), name, text, is_self=mine,
+                                            t=float(m.get("time") or time.time()), message_id=str(m.get("message_id")))
             lines += 1
     if lines:
         logger.info(f"[QQ] 补看了群 {group_id} 之前的 {lines} 条消息")

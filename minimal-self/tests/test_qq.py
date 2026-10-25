@@ -51,7 +51,11 @@ class TestPerceiving(unittest.TestCase):
             "get_forward_msg": {"messages": [{"sender": {"nickname": "阿甲"}, "message": [{"type": "text", "data": {"text": "第一句"}}]},
                                              {"sender": {"nickname": "阿乙"}, "message": "第二句"}]}})
         quoted = run(q.perceive([{"type": "reply", "data": {"id": "1"}}, {"type": "text", "data": {"text": "真的吗"}}]))
-        self.assertTrue(quoted.startswith("（回复 我：「我觉得会涨」）"), quoted)
+        # Her own words quoted by someone else must read as hers, never as a bare "我"
+        self.assertTrue(quoted.startswith("（引用了我（乃爱）说的：「我觉得会涨」）"), quoted)
+        at = run(q.perceive([{"type": "at", "data": {"qq": "999"}}, {"type": "at", "data": {"qq": "5", "name": "小明"}},
+                             {"type": "text", "data": {"text": "你们看"}}]))
+        self.assertEqual(at, "@我（乃爱） @小明 你们看")
         fwd = run(q.perceive([{"type": "forward", "data": {"id": "f1"}}]))
         self.assertIn("阿甲：第一句", fwd)
         self.assertIn("阿乙：第二句", fwd)
@@ -101,7 +105,7 @@ class TestPerceiving(unittest.TestCase):
             "message": [{"type": "image", "data": {"sub_type": 0, "url": "u"}}]}})
         text = run(q.perceive([{"type": "reply", "data": {"id": "1"}},
                                {"type": "text", "data": {"text": "这是啥"}}], look=True))
-        self.assertIn("回复 小明", text)
+        self.assertIn("引用了 小明 说的", text)
         self.assertIn("一张小猫的照片", text)                 # a quoted picture cannot ride along: API describes it
         calls = q.senses.calls
         run(q.perceive([{"type": "reply", "data": {"id": "1"}}]))

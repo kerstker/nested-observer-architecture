@@ -50,8 +50,11 @@ class StickerMemory:
             last_seen REAL
         )''')
         # Vectors from another embedding model are not comparable: re-embed the occasions
-        if "emb_model" not in [r[1] for r in conn.execute("PRAGMA table_info(stickers)")]:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(stickers)")]
+        if "emb_model" not in cols:
             conn.execute("ALTER TABLE stickers ADD COLUMN emb_model TEXT")
+        if "looks" not in cols:                   # what the picture shows, as she saw it once
+            conn.execute("ALTER TABLE stickers ADD COLUMN looks TEXT")
         stale = conn.execute("SELECT id, contexts FROM stickers WHERE contexts IS NOT NULL AND contexts != '[]' "
                              "AND (emb_model IS NULL OR emb_model != ?)", (embedder.model_id,)).fetchall()
         if stale:
@@ -165,7 +168,69 @@ class StickerMemory:
                 continue
             scored.append((sim * (0.5 + r["q"]) * math.log1p(r["uses"]), r))
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [{"id": r["id"], "summary": r["summary"], "contexts": json.loads(r["contexts"])} for _, r in scored[:k]]
+        looks = self._looks_of([r["id"] for _, r in scored[:k]])
+        return [{"id": r["id"], "summary": r["summary"], "contexts": json.loads(r["contexts"]), "looks": looks.get(r["id"])}
+                for _, r in scored[:k]]
+
+    # --- what the pictures show ------------------------------------------------------
+
+    def _looks_of(self, ids: List[int]) -> Dict[int, str]:
+        if not ids:
+            return {}
+        conn = sqlite3.connect(self.db_path)
+        rows = conn.execute(f"SELECT id, looks FROM stickers WHERE id IN ({','.join('?' * len(ids))})", ids).fetchall()
+        conn.close()
+        return {i: l for i, l in rows if l}
+
+    def looks(self, sticker_id: int) -> Optional[str]:
+        return self._looks_of([sticker_id]).get(sticker_id)
+
+    def looks_of_segment(self, seg: Dict[str, Any]) -> Optional[str]:
+        """What a sticker someone just sent shows, if it is one she has already looked at."""
+        key = self._key(seg)
+        if not key:
+            return None
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute("SELECT looks FROM stickers WHERE key = ?", (key,)).fetchone()
+        conn.close()
+        return row[0] if row and row[0] and row[0] != "（看不清）" else None
+
+    def picture(self, sticker_id: int) -> Optional[bytes]:
+        """One still frame of the sticker as PNG (animated GIFs: a frame from the middle)."""
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute("SELECT kind, data FROM stickers WHERE id = ?", (sticker_id,)).fetchone()
+        conn.close()
+        if not row or row[0] != "image":
+            return None
+        try:
+            path = json.loads(row[1])["path"]
+            from PIL import Image
+            import io
+            im = Image.open(path)
+            im.seek(getattr(im, "n_frames", 1) // 2)
+            buf = io.BytesIO()
+            im.convert("RGB").save(buf, "PNG")
+            return buf.getvalue()
+        except Exception as e:
+            logger.info(f"[Stickers] no picture for #{sticker_id}: {e}")
+            return None
+
+    def describe_missing(self, describe: Callable[[bytes], Optional[str]], limit: int = 10) -> int:
+        """Look at stickers she has not seen yet (once each) and remember what they show."""
+        conn = sqlite3.connect(self.db_path)
+        ids = [r[0] for r in conn.execute("SELECT id FROM stickers WHERE kind = 'image' AND (looks IS NULL OR looks = '') "
+                                          "ORDER BY uses + sent DESC LIMIT ?", (limit,)).fetchall()]
+        conn.close()
+        done = 0
+        for sid in ids:
+            png = self.picture(sid)
+            text = describe(png) if png else None
+            conn = sqlite3.connect(self.db_path)
+            conn.execute("UPDATE stickers SET looks = ? WHERE id = ?", ((text or "（看不清）")[:80], sid))
+            conn.commit()
+            conn.close()
+            done += bool(text)
+        return done
 
     def segment(self, sticker_id: int) -> Optional[Dict[str, Any]]:
         """The OneBot message segment that sends this sticker."""

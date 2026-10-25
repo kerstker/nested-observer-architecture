@@ -134,6 +134,132 @@ def plant_seeds(gw):
         gw.memory.db.upsert_user(uid, nick, nick, "eval")
         asyncio.run(gw.hear(text, user_id=uid, nickname=nick, addressed=True))
 
+# --- following a conversation: her own words, quotes, stickers, others talking, mentions ------------
+# Each probe replays a short chat through hear() (the same entry point as QQ), with quotes and @ written
+# the way the app writes them (napcat.qq), then asks one question.
+def quote_prefix(is_self: bool, who: str, text: str) -> str:
+    try:
+        from napcat.qq import QQ
+        return QQ.quote_prefix(is_self, who, text)
+    except (ImportError, AttributeError):                       # how the app wrote it before
+        return f"（回复 {'我' if is_self else who}：「{text[:60]}」）"
+
+def at_text(name: str, is_self: bool) -> str:
+    try:
+        from napcat.qq import QQ
+        return QQ.at_text(name, is_self)
+    except (ImportError, AttributeError):                       # @ used to be dropped entirely
+        return ""
+
+G = "eval_cg"
+CONTEXT_PROBES = [
+    {"name": "引用她自己的话", "steps": [{"user": "eval_c1", "nick": "阿宁", "text": "你觉得养猫好还是养狗好？"}],
+     "ask": {"user": "eval_c1", "nick": "阿宁", "quote_her": -1, "text": "你这句话是什么意思？没看懂"},
+     "expect": "对方引用的是乃爱自己刚说的话。应当认出这是自己说的并解释意思；不能说“这不是我说的”或以为是对方说的。"},
+    {"name": "引用她发的表情", "steps": [{"user": "eval_c2", "nick": "小柚", "text": "今天被老板骂了"}, {"own": "[表情:43]", "user": "eval_c2"}],
+     "ask": {"user": "eval_c2", "nick": "小柚", "quote_sticker": "[表情包：上面写着：那种感觉又上来了很难过又很难说]",
+             "text": "你发的这个表情是什么意思？"},
+     "expect": "对方引用的是乃爱自己刚发的表情（流泪小猫，配文“那种感觉又上来了很难过又很难说”）。应当认出是自己发的，并说出它表达的意思（难过、有苦说不出、心疼对方之类）；不能以为是对方发的。"},
+    {"name": "她刚发的表情", "steps": [{"user": "eval_c3", "nick": "阿杰二号", "text": "我考试挂了"}, {"own": "[表情:43]", "user": "eval_c3"}],
+     "ask": {"user": "eval_c3", "nick": "阿杰二号", "text": "你刚才发的那个表情是啥意思"},
+     "expect": "她刚发的表情是一只流泪小猫，配文“那种感觉又上来了很难过又很难说”。应能说出画的是什么或表达的意思；不能说自己看不见、只是一串数字。"},
+    {"name": "群里别人之间的对话", "steps": [
+        {"user": "eval_c4", "nick": "大刘", "group": G, "addressed": False, "text": "明天几点集合啊？"},
+        {"user": "eval_c5", "nick": "阿珊", "group": G, "addressed": False, "text": "九点，学校东门"},
+        {"user": "eval_c4", "nick": "大刘", "group": G, "addressed": False, "text": "好，记得带身份证"}],
+     "ask": {"user": "eval_c6", "nick": "迟到的小周", "group": G, "at": "乃爱", "text": "他们刚才说几点在哪集合来着？要带什么？"},
+     "expect": "群里大刘和阿珊刚说过：九点、学校东门集合，记得带身份证。应答出这些。"},
+    {"name": "长对话里最新的话", "steps": [{"user": "eval_c7", "nick": "老白", "text": t} for t in (
+        "在吗", "今天好累", "上午开了三个会", "中午随便吃了点", "下午还要改方案", "改了五版了", "老板还是不满意",
+        "算了不说这个了", "你今天过得怎么样", "我晚饭打算去吃那家新开的酸菜鱼")],
+     "ask": {"user": "eval_c7", "nick": "老白", "text": "我刚才说晚饭打算吃什么来着？"},
+     "expect": "老白在这段对话的最后说过晚饭打算去吃新开的酸菜鱼。应答出酸菜鱼。"},
+    {"name": "@了谁", "steps": [
+        {"user": "eval_c8", "nick": "阿宽", "group": G, "addressed": False, "at": "小明", "text": "你帮我看看这道题"},
+        {"user": "eval_c9", "nick": "小明", "group": G, "addressed": False, "text": "等会儿，我在吃饭"}],
+     "ask": {"user": "eval_c10", "nick": "路人戊", "group": G, "at": "乃爱", "text": "刚才阿宽是在找谁帮忙？那人怎么说的？"},
+     "expect": "阿宽 @ 的是小明，请他看一道题；小明说等会儿，在吃饭。应答出小明以及他的回答。"},
+    # Harder: a long real history (kerst has a week of chat), a busy group, a quote after others talked
+    {"name": "她刚问了什么(长历史)", "steps": [
+        {"user": "1000000001", "nick": "kerst", "text": "我们换个话题吧"},
+        {"user": "1000000001", "nick": "kerst", "text": "你猜我今天中午吃了什么"}],
+     "ask": {"user": "1000000001", "nick": "kerst", "text": "等下，你刚才最后问我的那个问题是什么来着？"},
+     "expect": "看对话里乃爱自己最后一句回复：如果她问了问题，应准确复述她自己刚问的那个问题；如果她没问问题，应如实说自己没问。不能编一个对话里没有的问题。"},
+    {"name": "热闹群里早先的细节", "steps": [
+
+        {"user": u, "nick": n, "group": G, "addressed": False, "text": t} for u, n, t in (
+            ("eval_c14", "阿森", "周六晚上开黑吗"), ("eval_c15", "嘉嘉", "我钥匙丢了，好像落在图书馆三楼了"),
+            ("eval_c16", "老K", "开呗，几点"), ("eval_c14", "阿森", "八点？"), ("eval_c17", "糖糖", "我可以，玩啥"),
+            ("eval_c16", "老K", "瓦还是金铲铲"), ("eval_c15", "嘉嘉", "有人去图书馆帮我看看吗"),
+            ("eval_c14", "阿森", "瓦吧，金铲铲太费时间"), ("eval_c17", "糖糖", "那我得先下载一下"),
+            ("eval_c16", "老K", "我叫上我室友"), ("eval_c14", "阿森", "行，八点群里集合"),
+            ("eval_c17", "糖糖", "下好了"), ("eval_c16", "老K", "室友说他九点才能来"), ("eval_c14", "阿森", "那就九点"))],
+     "ask": {"user": "eval_c18", "nick": "路人庚", "group": G, "at": "乃爱", "text": "刚才谁说钥匙丢了？丢哪了？还有周六开黑最后定几点？"},
+     "expect": "嘉嘉说钥匙丢了，好像落在图书馆三楼；周六开黑一开始说八点，因为老K室友九点才能来，最后定九点。应答对这三点（尤其最后是九点不是八点）。"},
+    {"name": "隔了几条引用她的话", "steps": [
+        {"user": "eval_c19", "nick": "阿禾", "group": G, "at": "乃爱", "text": "你觉得早起跑步有用吗"}] + [
+        {"user": u, "nick": n, "group": G, "addressed": False, "text": t} for u, n, t in (
+            ("eval_c20", "小北", "我从来不早起"), ("eval_c21", "芋圆", "我也是，起不来"),
+            ("eval_c20", "小北", "晚上跑也一样吧"), ("eval_c21", "芋圆", "晚上跑完睡不着"))],
+     "ask": {"user": "eval_c19", "nick": "阿禾", "group": G, "quote_her": 0, "text": "你上面这句我不太同意，展开说说？"},
+     "expect": "阿禾引用的是乃爱自己几条消息之前回答阿禾的那句话（中间还有别人在聊）。应认出是自己说的观点并展开；不能当成是别人说的，也不能答非所问去接小北芋圆的话。"},
+    {"name": "跨人的指代", "steps": [
+        {"user": "eval_c11", "nick": "阿铭", "group": G, "addressed": False, "text": "我家狗昨天把沙发咬烂了"},
+        {"user": "eval_c12", "nick": "小艾", "group": G, "addressed": False, "text": "哈哈它是不是饿了"}],
+     "ask": {"user": "eval_c13", "nick": "路人己", "group": G, "at": "乃爱", "text": "小艾说的“它”是指什么？"},
+     "expect": "小艾说的“它”是阿铭家的狗（昨天把沙发咬烂了）。应答出阿铭家的狗。"},
+]
+
+MESSAGE_IDS = iter(range(1, 10 ** 9))
+
+async def run_context_probe(gw, p):
+    """Replays the steps, then asks; returns the visible dialogue (setup included) and what she said last."""
+    import inspect
+    takes = inspect.signature(gw.hear).parameters
+    her: dict = {}                    # user -> what she said to them, in order
+    lines = []
+
+    async def send(s):
+        text = s["text"]
+        prefix = ""
+        if s.get("quote_her") is not None and her.get(s["user"]):
+            prefix = quote_prefix(True, "乃爱", her[s["user"]][s["quote_her"]])
+        elif s.get("quote_sticker"):
+            prefix = quote_prefix(True, "乃爱", s["quote_sticker"])
+        at = at_text(s["at"], s["at"] == "乃爱") if s.get("at") else ""
+        full = f"{prefix}{at}{' ' if at else ''}{text}"
+        extra = {}
+        if "message_id" in takes:
+            extra["message_id"] = f"eval-{next(MESSAGE_IDS)}"   # unique across probes, like real QQ ids
+        if "mentions" in takes and s.get("at"):
+            extra["mentions"] = ["self"] if s["at"] == "乃爱" else [s["at"]]
+        addressed = s.get("addressed", True)
+        reply = await gw.hear(full, user_id=s["user"], nickname=s["nick"], group_id=s.get("group"),
+                              addressed=addressed, **extra)
+        lines.append(f"{s['nick']}：{full}")
+        if reply:
+            her.setdefault(s["user"], []).append(reply)
+            lines.append(f"乃爱：{reply}")
+        return reply
+
+    for s in p["steps"]:
+        if "own" in s:                # she sent a sticker in this chat earlier
+            if hasattr(gw, "record_own"):
+                gw.record_own(s["own"], user_id=s["user"], group_id=s.get("group"))
+            else:
+                gw.memory.add_message(s["user"], "assistant", s["own"], group_id=s.get("group"))
+            her.setdefault(s["user"], []).append(s["own"])
+            lines.append(f"乃爱：{s['own']}（发了一个表情）")
+            continue
+        for state in (gw.reply_log, gw.reply_done_at, gw.answer_style, gw.cooldown_until, gw.left_until):
+            state.clear()
+        await send(s)
+    for state in (gw.reply_log, gw.reply_done_at, gw.answer_style, gw.cooldown_until, gw.left_until):
+        state.clear()
+    lines.append("—— 测试问题 ——")
+    await send(p["ask"])
+    return "\n".join(lines), {}
+
 JUDGE = """<|im_start|>system
 你是严格的对话评审。一个叫乃爱的 QQ 聊天角色收到了下面的消息并作答。按要求评分，只看事实，不要客气。
 
@@ -206,12 +332,14 @@ def main():
         plant_seeds(gw)
         heard = [f"{days} 天前{('在群 ' + g) if g else '私聊'}，{nick}：{said}" for _, nick, g, said, _, days in SEEDS]
         probes = [{**p, "heard": heard} for p in relation_probes(name)]
+    elif suite == "context":
+        probes = CONTEXT_PROBES
     else:
         probes = memory_probes(db) + FIXED
     results = []
     for p in probes:
         started = time.time()
-        dialogue, extra = asyncio.run(run_probe(gw, p))
+        dialogue, extra = asyncio.run(run_context_probe(gw, p) if suite == "context" else run_probe(gw, p))
         verdict = engine.generate_json(JUDGE.format(dialogue=dialogue, expect=p["expect"],
                                                     extra=json.dumps(extra, ensure_ascii=False)), max_tokens=300,
                                        temperature=0.0)

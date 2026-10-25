@@ -120,16 +120,25 @@ class QQ:
                     return f"[分享：{title}{'｜' + desc[:40] if desc and desc != title else ''}]"
         return f"[分享：{card.get('prompt', '卡片')}]"
 
+    @staticmethod
+    def quote_prefix(is_self: bool, who: str, text: str) -> str:
+        """How a quoted message reads. Never a bare "我": inside someone else's message she read it as them."""
+        return f"（引用了{'我（乃爱）' if is_self else ' ' + who + ' '}说的：「{text[:60]}」）"
+
+    @staticmethod
+    def at_text(name: str, is_self: bool) -> str:
+        return "@我（乃爱）" if is_self else f"@{name}"
+
     async def _quoted(self, message_id: str, names: Callable[[str], str], look: bool = False) -> str:
         data = await self.call("get_msg", {"message_id": message_id}, timeout=4)
         if not data:
             return "（回复了一条消息）"
         sender = data.get("sender") or {}
-        who = "我" if self.self_id and str(sender.get("user_id")) == str(self.self_id) else \
-            (sender.get("card") or sender.get("nickname") or names(str(sender.get("user_id"))))
+        mine = bool(self.self_id and str(sender.get("user_id")) == str(self.self_id))
+        who = sender.get("card") or sender.get("nickname") or names(str(sender.get("user_id")))
         # A quoted picture/voice cannot ride along with the conversation, so it is looked at here
         text = await self.perceive(data.get("message") or [], names, depth=1, look=look, caption=True)
-        return f"（回复 {who}：「{text[:60]}」）"
+        return self.quote_prefix(mine, who, text)
 
     async def _forward(self, fid: str, names, depth: int) -> str:
         data = await self.call("get_forward_msg", {"id": fid}, timeout=6)
@@ -163,6 +172,13 @@ class QQ:
             t, d = s.get("type"), s.get("data") or {}
             if t == "text":
                 parts.append(d.get("text", ""))
+            elif t == "at":
+                qq_id = str(d.get("qq") or "")
+                if qq_id == "all":
+                    parts.append("@全体成员 ")
+                else:
+                    mine = bool(self.self_id and qq_id == str(self.self_id))
+                    parts.append(self.at_text(d.get("name") or names(qq_id), mine) + " ")
             elif t == "reply" and depth == 0:
                 parts.insert(0, await self._quoted(str(d.get("id")), names, look=look))
             elif t == "forward" and depth < 2:

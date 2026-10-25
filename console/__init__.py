@@ -34,6 +34,11 @@ class EvolveRequest(BaseModel):
     task: str = ""
     id: str = ""
 
+class QqRequest(BaseModel):
+    action: str
+    params: dict = {}
+    timeout: float = 15.0
+
 # Feeding and petting go through the normal perception path, so they are experienced
 # (appraisal, cause log, episode) exactly like the same words from QQ would be.
 SPOKEN_ACTIONS = {"feed": "喂你吃小鱼干", "pet": "摸摸头"}
@@ -137,5 +142,15 @@ def create_console_router(gw, token: str = None) -> APIRouter:
         if not result.get("ok"):
             raise HTTPException(400, result.get("error") or "应用失败")
         return json_response(result)
+
+    # ---- QQ 能力（调试 / 手动触发）：OCR、取图、语音转写、合并转发、群历史 ----
+    @router.post("/api/qq")
+    async def qq_action(body: QqRequest, request: Request):
+        authorize(request)
+        from napcat.qq import qq as _qq
+        if not _qq.connected():
+            raise HTTPException(400, "NapCat 未连接")
+        data = await _qq.call(body.action, body.params or {}, timeout=float(body.timeout))
+        return json_response({"action": body.action, "ok": data is not None, "data": data})
 
     return router

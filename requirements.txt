@@ -7,3 +7,4 @@ pydantic
 requests
 llama-cpp-python
 numpy
+ddgs>=9.16

@@ -47,37 +47,13 @@ class WebSearchTool:
         can tell "learned something" apart from "found nothing".
         """
         try:
-            # 0. Try DuckDuckGo Library first (Most reliable if installed)
-            try:
-                # Direct import from ddgs which is the new package name
-                try:
-                    from ddgs import DDGS
-                except ImportError:
-                    # Fallback to old name just in case
-                    from duckduckgo_search import DDGS
-                
-                logger.info(f"Using ddgs library for: {query}")
-                
-                # In newer versions of duckduckgo_search, DDGS is a class context manager
-                # But proxy setting might be needed if env is weird. 
-                # Let's try default first.
-                with DDGS() as ddgs:
-                    # ddgs.text() returns a generator
-                    results = [r for r in ddgs.text(query, max_results=limit)]
-                    if results:
-                        formatted = f"Search Results for '{query}':\n"
-                        for i, r in enumerate(results):
-                            formatted += f"{i+1}. [{r.get('title')}]({r.get('href')}): {r.get('body')}\n"
-                        return formatted
-            except ImportError:
-                logger.info("ddgs library not found, falling back to scrapers.")
-            except Exception as e:
-                # Catching generic Exception to be safe against library changes
-                logger.warning(f"ddgs library failed: {e}")
+            # 0. The ddgs library first (most reliable when installed)
+            results = self._ddgs_search(query, limit)
 
-            # 1. Try Baidu first (Scraping - more stable in CN)
-            logger.info(f"Searching Baidu for: {query}")
-            results = self._baidu_search(query, limit)
+            # 1. Then Baidu (Scraping - more stable in CN)
+            if not results:
+                logger.info(f"Searching Baidu for: {query}")
+                results = self._baidu_search(query, limit)
             
             # 2. If failed, try DuckDuckGo Manual Scraper
             if not results:
@@ -96,6 +72,30 @@ class WebSearchTool:
         except Exception as e:
             logger.error(f"Search failed: {e}")
             return None
+
+    def _ddgs_search(self, query: str, limit: int) -> List[Dict[str, str]]:
+        try:
+            from ddgs import DDGS                       # the package's current name
+        except ImportError:
+            try:
+                from duckduckgo_search import DDGS      # its old name
+            except ImportError:
+                logger.info("ddgs library not found, falling back to scrapers.")
+                return []
+        logger.info(f"Using ddgs library for: {query}")
+        # "auto" picks engines at random and sometimes draws only ones that are blocked here
+        # (DuckDuckGo itself is); Bing through ddgs has been reliable, so it is the second try.
+        for backend in ("auto", "bing"):
+            try:
+                with DDGS() as ddgs:
+                    found = list(ddgs.text(query, max_results=limit, backend=backend))
+            except Exception as e:
+                # Catching generic Exception to be safe against library changes
+                logger.warning(f"ddgs library failed ({backend}): {e}")
+                continue
+            if found:
+                return [{"title": r.get("title"), "link": r.get("href"), "snippet": r.get("body")} for r in found]
+        return []
 
     def _baidu_search(self, query: str, limit: int) -> List[Dict[str, str]]:
         """

@@ -82,7 +82,7 @@ class TestScopeInPrompt(unittest.TestCase):
         prompt = gw._construct_prompt("你好", "", {"emotion": "neutral"}, None,
                                       user_id="stranger", nickname="路人")
         self.assertIn("kerst 最近在折腾显卡和换号", prompt)
-        self.assertNotIn("EVOLVE", prompt)
+        self.assertNotIn("\n- evolve", prompt)   # the evolve tool is not offered
 
     def test_creator_private_chat_sees_the_real_capability(self):
         gw = self._gw()
@@ -91,7 +91,7 @@ class TestScopeInPrompt(unittest.TestCase):
         gw.evolve_creator = "creator"
         prompt = gw._construct_prompt("你能改自己吗", "", {"emotion": "neutral"}, None,
                                       user_id="creator", nickname="菜菜", evolve_allowed=True)
-        self.assertIn("EVOLVE", prompt)
+        self.assertIn("\n- evolve", prompt)
         self.assertIn("[我知道自己是什么]", prompt)
 
     def test_group_never_sees_it(self):
@@ -102,7 +102,7 @@ class TestScopeInPrompt(unittest.TestCase):
         prompt = gw._construct_prompt("你能改自己吗", "", {"emotion": "neutral"}, "G1",
                                       user_id="creator", nickname="菜菜",
                                       evolve_allowed=gw._evolve_allowed("creator", "G1"))
-        self.assertNotIn("EVOLVE", prompt)
+        self.assertNotIn("\n- evolve", prompt)   # the evolve tool is not offered
 
 
 if __name__ == "__main__":

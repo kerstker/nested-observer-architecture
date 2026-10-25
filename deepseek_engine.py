@@ -28,6 +28,8 @@ class DeepSeekEngine:
 
     # 模型能直接看图（app 据此决定"把图交给她"；不能看图的引擎只会知道"来了张图"）
     supports_images = True
+    # 原生 function calling：GlobalWorkspace 据此走多步工具循环，而不是从文本里抠 "Action: ..."
+    supports_tools = True
 
     def __init__(self, api_key: str = None, model: str = "deepseek-flash",
                  base_url: str = "https://api.deepseek.com", timeout: float = 60.0,
@@ -134,7 +136,45 @@ class DeepSeekEngine:
                 logger.warning("[DeepSeek] JSON 模式返回的内容无法解析，按普通文本处理")
         return {"reply": text}
 
+    def chat_tools(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], max_tokens: int = 300,
+                   temperature: float = 0.7) -> Dict[str, Any]:
+        """一轮带工具的对话。返回 {"content": str, "tool_calls": [{"id", "name", "arguments"(dict)}], "raw": message}；
+        失败时 {"content": "", "tool_calls": [], "error": str}。messages 原样发出（调用方负责拼好 tool 轮）。"""
+        body = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "thinking": {"type": "disabled"},
+            "stream": False,
+        }
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
+        try:
+            message = self._post_message(body)
+        except Exception as e:
+            with self._usage_lock:
+                self.usage["failures"] += 1
+            logger.error(f"[DeepSeek] 工具调用失败：{e}")
+            return {"content": "", "tool_calls": [], "error": str(e)}
+        calls = []
+        for c in message.get("tool_calls") or []:
+            fn = c.get("function") or {}
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+                if not isinstance(args, dict):
+                    args = {"value": args}
+            except json.JSONDecodeError:
+                args = {"_unparsed": fn.get("arguments")}
+            calls.append({"id": c.get("id") or f"call_{len(calls)}", "name": fn.get("name") or "", "arguments": args})
+        return {"content": (message.get("content") or "").strip(), "tool_calls": calls,
+                "raw": {k: message[k] for k in ("role", "content", "tool_calls") if k in message}}
+
     def _post(self, body: Dict[str, Any]) -> str:
+        return (self._post_message(body).get("content") or "").strip()
+
+    def _post_message(self, body: Dict[str, Any]) -> Dict[str, Any]:
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         last_error: Optional[Exception] = None
         for attempt in range(self.max_retries + 1):
@@ -147,7 +187,7 @@ class DeepSeekEngine:
                     raise ValueError(f"HTTP {resp.status_code}: {resp.text[:300]}")
                 data = resp.json()
                 self._record_usage(data.get("usage") or {})
-                return (data["choices"][0]["message"].get("content") or "").strip()
+                return data["choices"][0]["message"]
             except ValueError:
                 raise
             except Exception as e:

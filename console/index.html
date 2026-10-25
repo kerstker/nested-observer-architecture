@@ -63,6 +63,37 @@
   .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; }
   .kv dt { color: var(--muted); } .kv dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
   .empty { color: var(--muted); font-size: 12px; }
+  nav.tabs { display: flex; gap: 4px; padding: 0 20px; border-bottom: 1px solid var(--line); overflow-x: auto; background: var(--bg); }
+  nav.tabs button { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 9px 12px; color: var(--muted); white-space: nowrap; }
+  nav.tabs button:hover { color: var(--text); }
+  nav.tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+  nav.tabs .badge { font-size: 10px; margin-left: 4px; color: var(--accent); font-family: var(--mono); }
+  @media (max-width: 720px) { nav.tabs { padding: 0 8px; } }
+  main[hidden] { display: none; }
+  main.two { grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr); }
+  @media (max-width: 1100px) { main.two { grid-template-columns: 1fr; } }
+  .wide { grid-column: 1 / -1; }
+  pre.prompt { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.45 var(--mono); background: #0f1218; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; max-height: 420px; overflow: auto; margin: 6px 0 0; }
+  details > summary { cursor: pointer; }
+  .thought { color: var(--violet); }
+  .tag { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .spark { width: 100%; height: 130px; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .stat { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 8px; }
+  .stat div { background: #12151c; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .stat b { display: block; font: 600 16px var(--mono); }
+  .stat span { color: var(--muted); font-size: 11px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
+  .dot.on { background: var(--good); } .dot.off { background: var(--bad); }
+  #logbox { font: 12px/1.5 var(--mono); height: 600px; overflow: auto; background: #0f1218; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  #logbox div { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .lv-WARNING { color: var(--warn); } .lv-ERROR, .lv-CRITICAL { color: var(--bad); } .lv-DEBUG { color: var(--muted); }
+  textarea { background: #0f1218; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: 12px var(--mono); width: 100%; min-height: 70px; resize: vertical; }
+  select { background: #0f1218; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12px; }
+  .stack { display: flex; flex-direction: column; gap: 8px; }
+  .threshold { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--text); opacity: .75; }
+  section h2 select { font-size: 11px; padding: 1px 4px; margin-left: 4px; }
 </style>
 </head>
 <body>
@@ -74,14 +105,28 @@
   <span class="spacer"></span>
   <span id="backend" class="meta"></span>
 </header>
+<nav class="tabs" id="tabs">
+  <button data-tab="overview" class="on">总览</button>
+  <button data-tab="thinking">思维<span class="badge" id="badge-thinking"></span></button>
+  <button data-tab="mind">决策与价值</button>
+  <button data-tab="improve">自我改进</button>
+  <button data-tab="social">社交与对话</button>
+  <button data-tab="memory">记忆</button>
+  <button data-tab="system">系统与日志</button>
+</nav>
 <div id="error"></div>
-<main>
+<main data-pane="overview">
   <div class="col">
     <section>
       <h2>身体与心情</h2>
       <div class="big" id="mood">—</div>
       <div class="muted" id="body"></div>
       <div id="core"></div>
+      <div class="muted" id="monologue-peek" style="margin-top:8px"></div>
+    </section>
+    <section>
+      <h2>状态曲线<select id="hist-hours" aria-label="时间范围"><option value="6">6 小时</option><option value="24" selected>24 小时</option><option value="72">3 天</option><option value="168">7 天</option></select></h2>
+      <div id="hist"></div>
     </section>
     <section><h2>情绪</h2><div id="emotions"></div></section>
     <section><h2>需求</h2><div id="needs"></div></section>
@@ -127,6 +172,8 @@
         <button data-act="dream">整理记忆（做梦）</button>
         <button data-act="think">让她想点什么</button>
         <button data-act="tick">心跳一次</button>
+        <button data-act="snapshot">存状态快照</button>
+        <button data-act="selfcheck">立即自检</button>
       </div>
     </section>
     <section>
@@ -141,6 +188,245 @@
       <h2>自我</h2>
       <p id="autobiography" style="margin:0 0 10px;font-size:13px"></p>
       <dl class="kv" id="self"></dl>
+    </section>
+  </div>
+</main>
+<main data-pane="thinking" class="two" hidden>
+  <div class="col">
+    <section>
+      <h2>回复前的内心独白 · Thought（不会发出去）</h2>
+      <ul class="list" id="monologues" style="max-height:620px"></ul>
+    </section>
+    <section>
+      <h2>注意力图式 · 她对自己注意力的模型</h2>
+      <p id="att-report" style="margin:0 0 8px;font-size:13px"></p>
+      <dl class="kv" id="att-focus"></dl>
+      <h2 style="margin-top:14px">她预计接下来会注意到</h2>
+      <div id="att-predict"></div>
+      <h2 style="margin-top:14px">被分心（意料之外的注意转移）</h2>
+      <ul class="list" id="att-captures"></ul>
+      <h2 style="margin-top:14px">主动放下的念头（反刍控制）</h2>
+      <ul class="list" id="att-suppressed"></ul>
+    </section>
+  </div>
+  <div class="col">
+    <section>
+      <h2>模型调用 · 每一次"动脑"的输入与输出</h2>
+      <div class="controls" style="margin-bottom:8px;align-items:center">
+        <select id="trace-filter" aria-label="按来源筛选"><option value="">全部来源</option></select>
+        <span class="muted" id="trace-summary"></span>
+      </div>
+      <ul class="list" id="calls" style="max-height:900px"></ul>
+    </section>
+    <section>
+      <h2>工具调用 · 她用工具做了什么（回复中 / 执行任务时）</h2>
+      <ul class="list" id="tool-calls" style="max-height:520px"></ul>
+    </section>
+    <section>
+      <h2>注意力历史（最近 30 拍）</h2>
+      <ul class="list" id="att-history"></ul>
+    </section>
+  </div>
+</main>
+
+<main data-pane="mind" class="two" hidden>
+  <div class="col">
+    <section>
+      <h2>任务 · 她答应要做、会自己去做的事</h2>
+      <div class="muted" id="task-meta" style="margin-bottom:8px"></div>
+      <form id="task-form" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <select id="task-kind" aria-label="类型"><option value="remind">提醒</option><option value="do">去做</option></select>
+        <input id="task-what" placeholder="比如：查一下明天的天气告诉我" style="flex:1;min-width:160px" aria-label="内容">
+        <input id="task-min" type="number" value="1" min="0" style="width:70px" aria-label="分钟后">
+        <button type="submit">交给她（分钟后）</button>
+      </form>
+      <ul class="list" id="tasks" style="max-height:520px"></ul>
+    </section>
+    <section>
+      <h2>主动行为 · 预期自由能（得分 = 满足 + 求知 − 代价）</h2>
+      <div class="muted" id="drive-meta" style="margin-bottom:8px"></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>行动</th><th>对象</th><th class="num">得分</th><th class="num">满足</th><th class="num">求知</th><th class="num">代价</th><th class="num">成功率</th></tr></thead>
+        <tbody id="drive-options"></tbody>
+      </table></div>
+    </section>
+    <section>
+      <h2>信念 · 每个行动"管不管用"（Beta 分布）</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>需求 / 行动</th><th>对象</th><th class="num">α</th><th class="num">β</th><th class="num">均值</th><th class="num">次数</th></tr></thead>
+        <tbody id="beliefs"></tbody>
+      </table></div>
+    </section>
+    <section>
+      <h2>目标与承诺</h2>
+      <ul class="list" id="goals-full" style="max-height:480px"></ul>
+    </section>
+  </div>
+  <div class="col">
+    <section>
+      <h2>价值（竖线 = 出生时的位置）</h2>
+      <div id="values"></div>
+      <div class="muted" id="value-meta" style="margin-top:6px"></div>
+      <h2 style="margin-top:14px">最近一次评估</h2>
+      <div id="appraisal" class="muted"></div>
+      <h2 style="margin-top:14px">价值事件</h2>
+      <ul class="list" id="value-events"></ul>
+      <h2 style="margin-top:14px">价值变化（睡眠中演化）</h2>
+      <ul class="list" id="value-changes"></ul>
+    </section>
+    <section>
+      <h2>元认知 · 各领域的校准</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>领域</th><th class="num">自信</th><th class="num">校准后</th><th class="num">实际对</th><th class="num">Brier</th><th class="num">次数</th></tr></thead>
+        <tbody id="metacog"></tbody>
+      </table></div>
+      <div class="muted" id="metacog-pending" style="margin-top:8px"></div>
+    </section>
+    <section>
+      <h2>自我预测与计时</h2>
+      <dl class="kv" id="selfpred"></dl>
+    </section>
+  </div>
+</main>
+
+<main data-pane="improve" class="two" hidden>
+  <div class="col">
+    <section>
+      <h2>自诊断 · 从真实经历里读出的指标（竖线 = 阈值）</h2>
+      <div id="diag"></div>
+      <div class="muted" id="diag-meta" style="margin-top:8px"></div>
+    </section>
+    <section>
+      <h2>自我改进的尝试</h2>
+      <ul class="list" id="attempts"></ul>
+    </section>
+  </div>
+  <div class="col">
+    <section>
+      <h2>改造通道（Level 17）· 提案</h2>
+      <div class="muted" id="evolve-meta" style="margin-bottom:8px"></div>
+      <form id="evolve-form" class="stack">
+        <textarea id="evolve-task" placeholder="要改她的什么？例如：把群里插话的冷却时间改成可配置"></textarea>
+        <div class="controls"><button class="primary" type="submit">提交提案（在副本里跑，要几分钟）</button></div>
+      </form>
+      <ul class="list" id="proposals" style="margin-top:10px;max-height:640px"></ul>
+    </section>
+  </div>
+</main>
+
+<main data-pane="social" class="two" hidden>
+  <div class="col">
+    <section>
+      <h2>正在进行的对话</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>对象</th><th>群</th><th class="num">10 分钟内回复</th><th class="num">最后一次</th></tr></thead>
+        <tbody id="conversations"></tbody>
+      </table></div>
+    </section>
+    <section>
+      <h2>计时中的状态</h2>
+      <dl class="kv" id="timers-social"></dl>
+    </section>
+    <section>
+      <h2>睡着 / 离开时没看到的消息</h2>
+      <ul class="list" id="unread"></ul>
+    </section>
+    <section>
+      <h2>待发送 · 手势</h2>
+      <ul class="list" id="outbox"></ul>
+    </section>
+  </div>
+  <div class="col">
+    <section>
+      <h2>调整（只改运行中的她，重启后回到 config.json）</h2>
+      <div class="stack">
+        <label class="muted" for="auto-groups-input">可以自己开口的群（逗号分隔）</label>
+        <form id="auto-groups" style="display:flex;gap:8px"><input id="auto-groups-input" style="flex:1"><button type="submit">保存</button></form>
+        <label class="muted" for="mute-group">让某个群安静 / 解除（分钟）</label>
+        <form id="mute-form" style="display:flex;gap:8px;flex-wrap:wrap">
+          <input id="mute-group" placeholder="群号" style="width:140px">
+          <input id="mute-min" type="number" value="180" min="1" style="width:90px" aria-label="分钟">
+          <button type="submit" data-mode="mute">安静</button><button type="submit" data-mode="unmute">解除</button>
+        </form>
+        <label class="muted" for="thought-interval">念头最短间隔（秒；付费 API 建议调大）</label>
+        <form id="thought-form" style="display:flex;gap:8px"><input id="thought-interval" type="number" min="10" style="width:120px"><button type="submit">保存</button></form>
+        <div class="controls">
+          <button data-setting="clear_left">回到所有离开的对话</button>
+          <button data-setting="clear_cooldown">清除限流冷却</button>
+          <button data-setting="clear_unread">清空未读</button>
+        </div>
+        <div class="muted" id="settings-result"></div>
+      </div>
+    </section>
+    <section>
+      <h2>限流规则（硬上限）</h2>
+      <dl class="kv" id="limits"></dl>
+    </section>
+    <section>
+      <h2>群里最近一小时她说了几句</h2>
+      <div id="group-rate"></div>
+    </section>
+  </div>
+</main>
+
+<main data-pane="memory" class="two" hidden>
+  <section class="wide">
+    <h2>记忆库</h2>
+    <div class="stat" id="mem-stats"></div>
+  </section>
+  <div class="col">
+    <section>
+      <h2>搜索她的记忆（经历 / 事实 / 对话 / 旧记忆）</h2>
+      <form id="mem-search" style="display:flex;gap:8px;margin-bottom:10px"><input id="mem-q" placeholder="关键词…" style="flex:1" aria-label="关键词"><button class="primary" type="submit">搜索</button></form>
+      <div id="mem-results" class="stack"><div class="empty">输入关键词，按字面匹配</div></div>
+    </section>
+  </div>
+  <div class="col">
+    <section><h2>蒸馏出的事实（semantic_facts）</h2><ul class="list" id="facts"></ul></section>
+    <section><h2>自传的历次版本</h2><ul class="list" id="autobio-history"></ul></section>
+  </div>
+</main>
+
+<main data-pane="system" class="two" hidden>
+  <div class="col">
+    <section>
+      <h2>感官与后端</h2>
+      <dl class="kv" id="sys"></dl>
+    </section>
+    <section>
+      <h2>QQ 能力（手动调用 OneBot / NapCat 接口）</h2>
+      <form id="qq-form" class="stack">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <select id="qq-preset" aria-label="常用接口">
+            <option value="">常用接口…</option>
+            <option value='get_login_info|{}'>登录信息</option>
+            <option value='get_status|{}'>运行状态</option>
+            <option value='get_friend_list|{}'>好友列表</option>
+            <option value='get_group_list|{}'>群列表</option>
+            <option value='get_group_member_list|{"group_id": 0}'>群成员</option>
+            <option value='get_group_msg_history|{"group_id": 0, "count": 20}'>群历史</option>
+            <option value='ocr_image|{"image": ""}'>图片文字 OCR</option>
+            <option value='get_record|{"file": "", "out_format": "wav"}'>取语音</option>
+          </select>
+          <input id="qq-action" placeholder="action" style="flex:1;min-width:160px" aria-label="action">
+        </div>
+        <textarea id="qq-params" aria-label="参数 JSON">{}</textarea>
+        <div class="controls"><button class="primary" type="submit">调用</button></div>
+      </form>
+      <pre class="prompt" id="qq-out" hidden></pre>
+    </section>
+  </div>
+  <div class="col">
+    <section>
+      <h2>实时日志</h2>
+      <div class="controls" style="margin-bottom:8px">
+        <select id="log-level" aria-label="级别"><option value="">全部级别</option><option>INFO</option><option>WARNING</option><option>ERROR</option></select>
+        <input id="log-filter" placeholder="过滤文字…" style="flex:1;min-width:120px" aria-label="过滤">
+        <button id="log-pause" type="button">暂停</button>
+        <button id="log-clear" type="button">清屏</button>
+      </div>
+      <div id="logbox"></div>
+      <div class="muted" style="margin-top:6px">只显示控制台挂载后产生的日志（INFO 及以上）；完整日志在 data/ 下。</div>
     </section>
   </div>
 </main>
@@ -160,10 +446,10 @@ const FOCUS = { user_message: "有人在和她说话", hunger: "饥饿", social:
                 ignored: "被冷落", answer_surprise: "意外的回应", association: "回忆", gap: "意识中断", inner_speech: "自己的念头",
                 self_surprise: "对自己的意外" };
 const CHOICE = { spoke: "开口", silent: "沉默", consider: "犹豫", asleep: "睡着", woken: "被吵醒", muted: "被叫安静",
-                 feedback: "反馈", caught_up: "补看消息", noticed: "察觉", left: "离开", away: "已离开", limit: "上限", intend: "想做", attend: "收回注意", metacog: "元认知", goal: "目标", improve: "自我改进", evolved: "改造结果" };
+                 feedback: "反馈", caught_up: "补看消息", noticed: "察觉", left: "离开", away: "已离开", limit: "上限", intend: "想做", attend: "收回注意", metacog: "元认知", goal: "目标", improve: "自我改进", evolved: "改造结果", tools: "用工具", task: "任务" };
 const CHOICE_CLASS = { spoke: "src-perception", silent: "src-inner_speech", consider: "src-needs", asleep: "src-memory",
                        woken: "src-prediction", muted: "src-prediction", feedback: "src-self_model", caught_up: "src-continuity",
-                       noticed: "src-self_model", left: "src-memory", away: "src-memory", limit: "src-prediction", intend: "src-needs", attend: "src-self_model", metacog: "src-self_model", goal: "src-needs", improve: "src-self_model", evolved: "src-self_model" };
+                       noticed: "src-self_model", left: "src-memory", away: "src-memory", limit: "src-prediction", intend: "src-needs", attend: "src-self_model", metacog: "src-self_model", goal: "src-needs", improve: "src-self_model", evolved: "src-self_model", tools: "src-continuity", task: "src-needs" };
 // Which direction of change is good for her: more joy is good, more of a negative emotion is bad
 function causeClass(variable, delta) {
   if (variable === "surprise") return "src-perception";
@@ -171,6 +457,8 @@ function causeClass(variable, delta) {
   return good ? "pos" : "neg";
 }
 let serverNow = Date.now() / 1000;
+let state = null;
+let inboxSeen = 0, inboxPrimed = false;   // task results meant for the console show up in the chat   // the latest /api/state, for the tabs that show part of it
 
 const $ = (id) => document.getElementById(id);
 function el(tag, attrs = {}, ...children) {
@@ -209,6 +497,16 @@ function chip(source) { return el("span", { class: `chip src-${source}` }, SRC[s
 
 function render(s) {
   serverNow = s.now;
+  state = s;
+  const lm = s.last_monologue;
+  $("monologue-peek").textContent = lm && lm.thought ? `上次回复前她心里想的：${lm.thought.length > 90 ? lm.thought.slice(0, 90) + "…" : lm.thought}（${ago(lm.t)}）` : "";
+  $("badge-thinking").textContent = s.llm_calls ? String(s.llm_calls) : "";
+  for (const m of s.inbox || []) {
+    if (m.t <= inboxSeen) continue;
+    inboxSeen = m.t;
+    if (inboxPrimed) addMsg("noa", `【任务 #${m.task}】${m.text}`);
+  }
+  inboxPrimed = true;
   const mode = $("mode");
   mode.textContent = s.sleeping ? "睡着了" : "醒着";
   mode.className = "pill " + (s.sleeping ? "asleep" : "awake");
@@ -331,9 +629,464 @@ document.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click
   finally { b.disabled = false; }
 }));
 
+// ---- tabs: each one pulls its own data only while it is open ------------------------------
+const CALLER = { _generate_response: "回复", _idle_thinking_process: "闲时念头", _trigger_proactive_behavior: "主动找人",
+                 _trigger_curiosity_behavior: "好奇/搜索", _look_up: "查资料", consolidate: "记忆整理（梦）",
+                 _consolidate_memory: "事实抽取", _summarize_conversation: "总结对话", _reflect: "反思（整理时）" };
+const ACTION = { chat: "找 ta 聊天", ask_food: "要吃的", search: "上网看看", wait: "什么都不做", interject: "群里插话" };
+const NEEDW = { social: "孤独", hunger: "饥饿", curiosity: "无聊", hygiene: "清洁", none: "—" };
+const VKIND = { threat: "被触犯", affirm: "被肯定", enact: "我做到了" };
+const GSTATUS = { active: "进行中", done: "完成", abandoned: "放弃" };
+const PSTATUS_CLASS = (st) => !st ? "src-inner_speech" : st.startsWith("applied") ? "pos" : /fail|error|reject/.test(st) ? "neg" : "src-needs";
+function dur(sec) {
+  sec = Math.max(0, sec || 0);
+  if (sec < 60) return Math.round(sec) + " 秒";
+  if (sec < 3600) return Math.round(sec / 60) + " 分钟";
+  if (sec < 86400) return (sec / 3600).toFixed(1) + " 小时";
+  return (sec / 86400).toFixed(1) + " 天";
+}
+function until(t) { return t > serverNow ? "还有 " + dur(t - serverNow) : "已结束"; }
+function pct(v) { return v == null ? "—" : Math.round(v * 100) + "%"; }
+function n2(v, d = 2) { return v == null ? "—" : Number(v).toFixed(d); }
+function cut(t, n = 160) { t = t == null ? "" : String(t); return t.length > n ? t.slice(0, n) + "…" : t; }
+function kvs(id, pairs) { $(id).replaceChildren(...pairs.flatMap(([k, v]) => [el("dt", {}, k), el("dd", {}, v == null || v === "" ? "—" : v)])); }
+function thresholdBar(label, value, threshold, max, fmt) {
+  const w = Math.max(0, Math.min(1, value / max)) * 100, th = Math.max(0, Math.min(1, threshold / max)) * 100;
+  return el("div", { class: "row" }, el("span", {}, label),
+    el("div", { class: "bar" }, el("i", { style: `width:${w}%;background:${value >= threshold ? "var(--bad)" : "var(--teal)"}` }),
+      el("span", { class: "threshold", style: `left:${th}%` })),
+    el("span", { class: "v" }, fmt(value)));
+}
+
+let tab = "overview";
+// A tab's own error stays on that tab (the overview refresh would clear the shared bar every 2 s)
+function tabError(name, msg) {
+  const pane = document.querySelector(`main[data-pane="${name}"]`);
+  let box = pane.querySelector(".tab-error");
+  if (!msg) { if (box) box.remove(); return; }
+  if (!box) { box = el("section", { class: "wide tab-error", style: "border-color:var(--bad);color:var(--bad)" }); pane.prepend(box); }
+  box.textContent = msg === "Not Found"
+    ? "这个标签页的接口不存在（404）：正在运行的 app.py 还是旧代码。页面是每次从磁盘读的，接口要重启 app.py 才会加载。"
+    : "加载失败：" + msg;
+}
+const loaders = {};          // tab -> async () => void
+const intervals = { thinking: 3000, mind: 5000, improve: 10000, social: 3000, memory: 30000, system: 2000 };
+let tabTimer = null;
+function showTab(name) {
+  tab = name;
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll("main[data-pane]").forEach((m) => { m.hidden = m.dataset.pane !== name; });
+  try { localStorage.setItem("noa-console-tab", name); } catch (e) {}
+  clearInterval(tabTimer);
+  if (loaders[name]) {
+    const run = () => { if (!document.hidden && tab === name) loaders[name]().then(() => tabError(name, ""), (err) => tabError(name, err.message)); };
+    run();
+    tabTimer = setInterval(run, intervals[name] || 5000);
+  }
+}
+document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+
+// ---- overview additions: state curves --------------------------------------------------
+const SERIES = [
+  ["精力", (p) => p.energy == null ? null : p.energy / 100, "var(--good)"],
+  ["开心", (p) => p.joy, "#e6d36a"],
+  ["难过", (p) => p.sorrow, "var(--accent)"],
+  ["生气", (p) => p.anger, "var(--bad)"],
+  ["孤独", (p) => p.needs && p.needs.social, "var(--warn)"],
+  ["焦虑", (p) => p.anxiety, "var(--violet)"],
+];
+function sparkline(points) {
+  const box = $("hist");
+  if (points.length < 2) { box.replaceChildren(el("div", { class: "empty" }, "快照还不够画曲线（每 5 分钟存一次）")); return; }
+  const W = 600, H = 130, t0 = points[0].t, t1 = points[points.length - 1].t, span = Math.max(1, t1 - t0);
+  const x = (t) => ((t - t0) / span) * W, y = (v) => H - 4 - Math.max(0, Math.min(1, v)) * (H - 8);
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("preserveAspectRatio", "none"); svg.setAttribute("class", "spark");
+  svg.setAttribute("role", "img"); svg.setAttribute("aria-label", "状态随时间变化");
+  // sleep bands
+  let start = null;
+  points.forEach((p, i) => {
+    if (p.sleeping && start == null) start = p.t;
+    if ((!p.sleeping || i === points.length - 1) && start != null) {
+      const r = document.createElementNS(ns, "rect");
+      r.setAttribute("x", x(start)); r.setAttribute("y", 0); r.setAttribute("height", H);
+      r.setAttribute("width", Math.max(1, x(p.t) - x(start))); r.setAttribute("fill", "rgba(180,140,255,.10)");
+      svg.append(r); start = null;
+    }
+  });
+  for (const [, get, color] of SERIES) {
+    const d = points.map((p) => [p.t, get(p)]).filter(([, v]) => v != null)
+      .map(([t, v], i) => `${i ? "L" : "M"}${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("");
+    if (!d) continue;
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d); path.setAttribute("fill", "none"); path.setAttribute("stroke", color);
+    path.setAttribute("stroke-width", "1.6"); path.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.append(path);
+  }
+  const fmt = (t) => new Date(t * 1000).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  box.replaceChildren(svg,
+    el("div", { class: "legend" }, ...SERIES.map(([name, , c]) => el("span", {}, el("i", { style: `background:${c}` }), name)),
+      el("span", {}, el("i", { style: "background:rgba(180,140,255,.4)" }), "睡着")),
+    el("div", { class: "when" }, `${fmt(t0)} → ${fmt(t1)} · ${points.length} 个快照`));
+}
+async function loadHistory() { sparkline(await api("history?hours=" + $("hist-hours").value)); }
+$("hist-hours").addEventListener("change", () => loadHistory().catch(() => {}));
+setInterval(() => { if (!document.hidden && tab === "overview") loadHistory().catch(() => {}); }, 60000);
+
+// ---- 思维 -------------------------------------------------------------------------------
+const openCalls = new Set();
+let lastCallsSig = "";
+const fullPrompts = {};
+loaders.thinking = async () => {
+  const [t, m] = await Promise.all([api("trace"), api("mind")]);
+  fill("monologues", t.monologues.map((x) => el("li", {},
+    x.thought ? el("div", { class: "thought" }, "💭 " + x.thought) : el("div", { class: "muted" }, "（没有写出独白）"),
+    el("div", {}, x.response ? "→ " + x.response : el("span", { class: "muted" }, "→（决定不说话）")),
+    el("div", { class: "when" }, `${ago(x.t)}${x.confidence != null ? " · 自评把握 " + pct(x.confidence) : ""}${x.emotion ? " · " + x.emotion : ""}`))),
+    "还没有回复过谁（回复时模型写的 Thought 会出现在这里）");
+
+  const filter = $("trace-filter"), chosen = filter.value;
+  const callers = [...new Set(t.calls.map((c) => c.caller))];
+  filter.replaceChildren(el("option", { value: "" }, "全部来源"), ...callers.map((c) => el("option", { value: c }, CALLER[c] || c)));
+  filter.value = callers.includes(chosen) ? chosen : "";
+  const calls = t.calls.filter((c) => !filter.value || c.caller === filter.value);
+  const secs = t.calls.map((c) => c.seconds || 0);
+  $("trace-summary").textContent = t.calls.length
+    ? `最近 ${t.calls.length} 次 · 平均 ${(secs.reduce((a, b) => a + b, 0) / secs.length).toFixed(1)} 秒 · 失败 ${t.calls.filter((c) => c.error).length}` : "";
+  const sig = filter.value + "|" + calls.map((c) => c.t).join(",");
+  if (sig === lastCallsSig) { renderTools(t.tools || []); renderAttention(m); return; }
+  lastCallsSig = sig;
+  fill("calls", calls.map((c) => {
+    const d = el("details", {},
+      el("summary", {}, el("span", { class: "chip src-self_model" }, CALLER[c.caller] || c.caller),
+        el("span", { class: "tag" }, `${n2(c.seconds, 1)}s · 提示词 ${c.prompt_len} 字${c.media ? " · 图片 " + c.media : ""}${c.params && c.params.max_tokens ? " · 上限 " + c.params.max_tokens : ""}${c.params && c.params.temperature != null ? " · 温度 " + c.params.temperature : ""}`),
+        c.error ? el("div", { class: "neg" }, "错误：" + c.error) : el("div", {}, cut(c.reply, 200) || el("span", { class: "muted" }, "（空）")),
+        el("div", { class: "when" }, ago(c.t))),
+      el("div", { class: "muted", style: "margin-top:6px" }, "完整输出"), el("pre", { class: "prompt" }, c.reply || ""),
+      el("div", { class: "muted", style: "margin-top:6px" }, "提示词"), el("pre", { class: "prompt" }, fullPrompts[c.t] || c.prompt || ""));
+    const key = String(c.t);
+    if (openCalls.has(key)) d.open = true;
+    d.addEventListener("toggle", async () => {
+      if (!d.open) { openCalls.delete(key); return; }
+      openCalls.add(key);
+      if (!fullPrompts[c.t] && c.prompt_len > (c.prompt || "").length - 10) {
+        const full = await api("trace/" + c.i).catch(() => null);
+        if (full && full.t === c.t) { fullPrompts[c.t] = full.prompt; d.querySelectorAll("pre")[1].textContent = full.prompt; }
+      }
+    });
+    return el("li", {}, d);
+  }), "还没有调用过模型");
+  renderTools(t.tools || []);
+  renderAttention(m);
+};
+const TOOLNAME = { recall: "回忆", remember: "记住", web_search: "搜索", read_webpage: "读网页", schedule_task: "记任务",
+                   list_tasks: "看任务", cancel_task: "取消任务", group_history: "群聊记录", member_info: "群成员资料", evolve: "改造自己" };
+function renderTools(tools) {
+  fill("tool-calls", tools.map((c) => el("li", {},
+    el("details", {}, el("summary", {},
+        el("span", { class: "chip src-continuity" }, TOOLNAME[c.name] || c.name),
+        el("span", { class: "tag" }, `${JSON.stringify(c.args)} · ${n2(c.seconds, 1)}s · ${c.origin === "task" ? "执行任务" : "回复"} ${c.user || ""}${c.group_id ? "（群 " + c.group_id + "）" : ""}`),
+        el("div", {}, cut(c.result, 160)), el("div", { class: "when" }, ago(c.t))),
+      el("pre", { class: "prompt" }, c.result)))), "还没有用过工具");
+}
+function renderAttention(m) {
+  const a = m.attention;
+  $("att-report").textContent = a.report;
+  const f = a.focus;
+  kvs("att-focus", f ? [["在注意", f.content], ["种类", FOCUS[f.kind] || f.kind], ["来源", SRC[f.source] || f.source],
+    ["持续", `${dur(serverNow - f.since)} · ${f.cycles} 拍`], ["显著性", n2(f.salience)], ["同时在意", (f.also || []).join("；")],
+    ["工作区", `容量 ${m.workspace.capacity} · 点火阈值 ${m.workspace.threshold} · 噪声 ${m.workspace.noise}`]] : [["在注意", "没什么特别在意的"]]);
+  fill("att-predict", a.predict.map(([k, p]) => bar(FOCUS[k] || k, p, { color: "var(--teal)", fmt: pct })), "还没有足够的历史来预测");
+  fill("att-captures", a.captures.map((c) => el("li", {}, `从「${cut(FOCUS[c.from] || c.from, 30)}」被拉到「${cut(c.content, 60)}」`,
+    el("div", { class: "when" }, ago(c.t)))), "没有");
+  const sup = Object.entries(a.suppressed);
+  fill("att-suppressed", [...sup.map(([k, t]) => el("li", {}, el("span", { class: "chip src-prediction" }, FOCUS[k] || k),
+      `暂时不去想（${until(t)}）`, el("span", { class: "tag" }, `  已放下 ${a.disengaged[k] || 0} 次`))),
+    ...Object.entries(a.disengaged).filter(([k]) => !a.suppressed[k]).map(([k, n]) =>
+      el("li", { class: "muted" }, `${FOCUS[k] || k}：以前放下过 ${n} 次`))], "没有需要放下的事");
+  fill("att-history", a.history.map((h) => el("li", {}, el("span", { class: "chip src-continuity" }, FOCUS[h.kind] || h.kind),
+    cut(h.content, 100), el("div", { class: "when" }, ago(h.t)))), "还没有");
+}
+
+// ---- 决策与价值 --------------------------------------------------------------------------
+const TSTATUS = { pending: "等着", running: "在做", done: "做完", failed: "没做成", cancelled: "取消" };
+function renderTasks(m) {
+  const pending = m.tasks.filter((t) => t.status === "pending" || t.status === "running").length;
+  $("task-meta").textContent = `${m.native_tools ? "原生工具调用（多步）" : "文本协议工具调用"} · 进行中 ${pending} 件 · ` +
+    "提醒到点就发（睡着也会），要做的事等她醒着时用工具去做";
+  fill("tasks", m.tasks.map((t) => {
+    const li = el("li", { style: t.status === "pending" || t.status === "running" ? "" : "opacity:.7" },
+      el("span", { class: "chip " + (t.status === "done" ? "pos" : t.status === "failed" ? "neg" : "src-needs") }, TSTATUS[t.status] || t.status),
+      el("span", { class: "tag" }, `#${t.id} ${t.kind === "remind" ? "提醒" : "去做"} · 给 ${t.nickname || t.user_id}${t.group_id ? "（群 " + t.group_id + "）" : ""} · 来自 ${t.origin}`),
+      el("div", {}, t.what),
+      t.result ? el("div", { class: t.status === "failed" ? "neg" : "muted" }, (t.status === "done" ? "→ " : "") + cut(t.result, 200)) : null,
+      el("div", { class: "when" }, t.status === "pending" ? `${t.due > serverNow ? until(t.due) : "到时间了"} · 尝试 ${t.attempts} 次`
+        : `${ago(t.done_at || t.created)} · 尝试 ${t.attempts} 次`));
+    if (t.status === "pending") {
+      const b = el("button", { type: "button", style: "margin-top:4px" }, "取消");
+      b.addEventListener("click", async () => {
+        b.disabled = true;
+        try { await api("tasks/cancel", { id: t.id }); loaders.mind(); } catch (err) { alert(err.message); b.disabled = false; }
+      });
+      li.append(b);
+    }
+    return li;
+  }), "她还没有答应过要做什么");
+}
+$("task-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const what = $("task-what").value.trim(); if (!what) return;
+  try {
+    await api("tasks", { kind: $("task-kind").value, what, minutes: Number($("task-min").value) || 0 });
+    $("task-what").value = ""; loaders.mind();
+  } catch (err) { alert("没交上去：" + err.message); }
+});
+loaders.mind = async () => {
+  const m = await api("mind");
+  renderTasks(m);
+  const d = m.drives;
+  $("drive-meta").textContent = `选择温度 ${d.temperature}（越低越确定）· ` +
+    (d.next_action_in > 0 ? `距离下一次可以主动行动还有 ${dur(d.next_action_in)}` : "现在就可以主动行动") +
+    (d.error ? ` · 计算出错：${d.error}` : "");
+  const best = d.options.length ? d.options[0].score : 0;
+  fill("drive-options", d.options.map((o) => el("tr", {},
+    el("td", {}, ACTION[o.action] || o.action, el("div", { class: "muted" }, NEEDW[o.need] || o.need)),
+    el("td", {}, o.nickname || o.target || "—"),
+    el("td", { class: "num " + (o.score === best ? "pos" : "") }, n2(o.score, 3)),
+    el("td", { class: "num" }, n2(o.pragmatic, 3)), el("td", { class: "num" }, n2(o.epistemic, 3)),
+    el("td", { class: "num" }, n2(o.cost, 3)), el("td", { class: "num" }, pct(o.belief)))), "没有可选的行动");
+  fill("beliefs", d.beliefs.map((b) => el("tr", {},
+    el("td", {}, `${NEEDW[b.need] || b.need} / ${ACTION[b.action] || b.action}`), el("td", {}, b.target || "—"),
+    el("td", { class: "num" }, n2(b.alpha)), el("td", { class: "num" }, n2(b.beta)),
+    el("td", { class: "num" }, pct(b.alpha / (b.alpha + b.beta))), el("td", { class: "num" }, b.n))), "还没有任何经验");
+
+  fill("goals-full", m.goals.map((g) => {
+    let steps = []; try { steps = JSON.parse(g.steps || "[]"); } catch (e) {}
+    return el("li", { style: g.status === "active" ? "" : "opacity:.65" },
+      el("span", { class: "chip " + (g.status === "done" ? "pos" : g.status === "abandoned" ? "neg" : "src-needs") }, GSTATUS[g.status] || g.status),
+      el("span", { class: "tag" }, `[${g.kind}] `), g.text,
+      el("div", { class: "bar", style: "margin:4px 0" }, el("i", { style: `width:${(g.progress || 0) * 100}%;background:var(--teal)` })),
+      g.why ? el("div", { class: "muted" }, "为什么：" + cut(g.why, 120)) : null,
+      steps.length ? el("div", { class: "muted" }, "步骤：" + steps.join(" → ")) : null,
+      g.note ? el("div", { class: "muted" }, "备注：" + g.note) : null,
+      el("div", { class: "when" }, `${ago(g.created)} 定下 · 进度 ${pct(g.progress)} · 重要度 ${n2(g.importance)} · 尝试 ${g.attempts || 0} 次` +
+        (g.deadline ? ` · 期限 ${until(g.deadline)}` : "")));
+  }), "还没有目标");
+
+  const v = m.values;
+  fill("values", Object.entries(v.weights).sort((a, b) => b[1] - a[1]).map(([k, w]) => {
+    const row = bar((v.names[k] || [k])[0], w, { color: "var(--violet)" });
+    row.title = (v.names[k] || [])[1] || "";
+    row.children[1].append(el("span", { class: "threshold", style: `left:${(v.initial[k] || 0) * 100}%` }));
+    return row;
+  }));
+  $("value-meta").textContent = `自主度 ${n2(v.autonomy)} · 紧张 ${n2(v.tension)}`;
+  const ap = v.last_appraisal || {}, words = (o) => Object.entries(o || {}).map(([k, x]) => `${(v.names[k] || [k])[0]} ${n2(x)}`).join("、");
+  $("appraisal").textContent = `被触犯：${words(ap.threatened) || "无"} · 被肯定：${words(ap.affirmed) || "无"}`;
+  fill("value-events", v.events.map((e) => el("li", {},
+    el("span", { class: "chip " + (e.kind === "threat" ? "neg" : "pos") }, `${(v.names[e.name] || [e.name])[0]} ${VKIND[e.kind] || e.kind}`),
+    cut(e.text, 120), el("div", { class: "when" }, `${ago(e.t)} · 强度 ${n2(e.intensity)} · 感觉 ${n2(e.outcome)}${e.consolidated ? " · 已整理" : ""}`))), "还没有");
+  fill("value-changes", v.changes.map((c) => el("li", {},
+    el("span", { class: c.new > c.old ? "pos" : "neg" }, `${(v.names[c.name] || [c.name])[0]} ${n2(c.old, 3)} → ${n2(c.new, 3)}`),
+    " ", c.reason, el("div", { class: "when" }, ago(c.t)))), "还没有变过");
+
+  fill("metacog", Object.entries(m.metacog.stats).map(([k, s]) => el("tr", {},
+    el("td", {}, m.metacog.domains[k] || k), el("td", { class: "num" }, pct(s.conf)),
+    el("td", { class: "num" }, pct(s.cal != null ? s.cal : s.conf)),
+    el("td", { class: "num " + (s.n >= 3 && s.conf - s.acc > 0.15 ? "neg" : "") }, pct(s.acc)),
+    el("td", { class: "num" }, n2(s.brier, 3)), el("td", { class: "num" }, s.n))));
+  $("metacog-pending").textContent = (m.metacog.pending.length
+    ? "等着看对不对：" + m.metacog.pending.map((p) => `对 ${p.user_id} 说「${cut(p.said, 40)}」（${m.metacog.domains[p.domain] || p.domain}，把握 ${pct(p.calibrated)}）`).join("；")
+    : "没有等待验证的回答") + (m.metacog.verbal_confidence != null ? ` · 上次自报把握 ${pct(m.metacog.verbal_confidence)}` : "");
+
+  const sp = m.self_prediction, pend = sp.pending, tm = m.timers;
+  kvs("selfpred", [
+    ["一小时后", pend ? `预计精力 ${n2(pend.energy, 0)}、心情 ${n2(pend.valence)}（${until(pend.due)}揭晓）` : "—"],
+    ["预测误差", `精力 ${n2(sp.energy_error, 1)} 点 · 心情 ${n2(sp.valence_error)}（检验 ${sp.checks} 次）`],
+    ["说话锋利度", n2(m.temperament.style_edge, 3)],
+    ["下一个念头", tm.thought_in > 0 ? `至少 ${dur(tm.thought_in)} 后` : "随时（每拍 10% 概率）"],
+    ["下一次整理", tm.consolidation_in > 0 ? `${dur(tm.consolidation_in)} 后（且积压 ≥ 20）` : "积压 ≥ 20 条就整理"],
+    ["下一次快照", dur(tm.snapshot_in) + " 后"],
+    ["上次心跳", ago(tm.last_tick)],
+  ]);
+};
+
+// ---- 自我改进 ----------------------------------------------------------------------------
+loaders.improve = async () => {
+  const [m, ev] = await Promise.all([api("mind"), api("evolve")]);
+  const dg = m.diagnosis;
+  fill("diag", dg.measures.map((x) => {
+    const max = Math.max(x.threshold * 2, x.value * 1.1, 0.01);
+    const row = thresholdBar(cut(x.text, 14), x.value, x.threshold, max, (v) => n2(v));
+    row.title = x.evidence || "";
+    return el("div", {}, row, el("div", { class: "muted", style: "margin:-2px 0 8px 72px" }, x.evidence + (x.metric ? ` · 指标 ${x.metric}` : "")));
+  }), "数据还不够做诊断（每项都需要一定次数的经历）");
+  $("diag-meta").textContent = (dg.next_check_in > 0 ? `下一次自检在 ${dur(dg.next_check_in)} 后` : "自检随时可能进行") +
+    (dg.improving ? ` · 正在改进：${dg.improving.finding && dg.improving.finding.text}` : "") + "（需要 EVOLVE_ENABLED 且设置了创造者）";
+  fill("attempts", dg.attempts.map((a) => el("li", {},
+    el("span", { class: "chip " + PSTATUS_CLASS(a.status) }, a.status || "进行中"), a.problem,
+    el("div", { class: "muted" }, `改前 ${n2(a.value_before)}${a.value_after != null ? " → 改后 " + n2(a.value_after) : ""}${a.verdict ? " · " + a.verdict : ""}${a.note ? " · " + a.note : ""}`),
+    el("div", { class: "when" }, `${ago(a.t)}${a.proposal_id ? " · 提案 " + a.proposal_id : ""}`))), "还没有自己发起过改进");
+
+  $("evolve-meta").textContent = ev.enabled ? `已开启 · 创造者 ${ev.creator || "未设置"}` + (state && state.evolve && state.evolve.in_progress ? " · 有一份提案正在副本里跑" : "")
+    : (ev.hint || "未开启");
+  $("evolve-form").querySelector("button").disabled = !ev.enabled;
+  fill("proposals", (ev.proposals || []).map((p) => {
+    const li = el("li", {},
+      el("span", { class: "chip " + PSTATUS_CLASS(p.status) }, p.status || "?"),
+      el("span", { class: "tag" }, `${p.id} · ${p.kind || ""} · ${p.requested_by || ""}`),
+      el("div", {}, cut(p.task, 220)),
+      el("div", { class: "muted" }, `改了 ${p.files_changed || 0} 个文件 +${p.added || 0}/−${p.removed || 0} · 测试 ${p.tests_total != null ? (p.tests_total - (p.tests_failed || 0)) + "/" + p.tests_total : "—"}` +
+        (p.error ? " · 错误：" + cut(p.error, 120) : "") + (p.applied_at ? ` · 已于 ${ago(p.applied_at)}应用（${p.approved_by || ""}）` : "")),
+      p.report ? el("details", {}, el("summary", { class: "muted" }, "报告"), el("pre", { class: "prompt" }, p.report)) : null,
+      el("div", { class: "when" }, ago(p.t)));
+    if (ev.enabled && p.status === "tested") {
+      const b = el("button", { type: "button", style: "margin-top:6px" }, "审核通过并应用（之后需重启）");
+      b.addEventListener("click", async () => {
+        if (!confirm(`确定把提案 ${p.id} 应用到线上代码？应用后需要重启才生效。`)) return;
+        b.disabled = true;
+        try { const r = await api("evolve/apply", { id: p.id }); alert("已应用：" + JSON.stringify(r).slice(0, 300)); loaders.improve(); }
+        catch (err) { alert("应用失败：" + err.message); b.disabled = false; }
+      });
+      li.append(b);
+    }
+    return li;
+  }), "还没有提案");
+};
+$("evolve-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const task = $("evolve-task").value.trim();
+  if (!task) return;
+  const b = ev.submitter; b.disabled = true; b.textContent = "副本里运行中…（几分钟）";
+  try { const r = await api("evolve", { task }); $("evolve-task").value = ""; alert(`提案 ${r.id || ""}：${r.status || ""}${r.error ? "\n" + r.error : ""}`); }
+  catch (err) { alert("提交失败：" + err.message); }
+  finally { b.disabled = false; b.textContent = "提交提案（在副本里跑，要几分钟）"; loaders.improve().catch(() => {}); }
+});
+
+// ---- 社交与对话 --------------------------------------------------------------------------
+let settingsFilled = false;
+loaders.social = async () => {
+  const s = await api("social");
+  fill("conversations", s.conversations.map((c) => el("tr", {},
+    el("td", {}, c.nickname || c.user_id || "—"), el("td", {}, c.group_id || "私聊"),
+    el("td", { class: "num" }, c.replies_10min), el("td", { class: "num" }, c.last ? ago(c.last) : "—"))), "最近没有和谁说过话");
+  const who = (x) => `${x.user_id || ""}${x.group_id ? "（群 " + x.group_id + "）" : "（私聊）"}`;
+  kvs("timers-social", [
+    ["离开的对话", s.left.map((x) => `${who(x)} ${until(x.until)}`).join("；") || "无"],
+    ["限流冷却", s.cooldown.map((x) => `${who(x)} ${until(x.until)}`).join("；") || "无"],
+    ["被叫安静", Object.entries(s.muted).map(([g, t]) => `群 ${g} ${until(t)}`).join("；") || "无"],
+    ["QQ 禁言", Object.entries(s.qq_muted).map(([g, t]) => `群 ${g} ${until(t)}`).join("；") || "无"],
+    ["等人接话的插话", Object.entries(s.interjections).map(([g, t]) => `群 ${g}（${ago(t)}）`).join("；") || "无"],
+    ["已知机器人", s.bots.join("、") || "无"],
+  ]);
+  fill("unread", s.unread.map((u) => el("li", {}, el("b", {}, who(u)),
+    ...u.messages.slice(-5).map((m) => el("div", {}, `${m.nickname}：${cut(m.text, 100)}`, el("span", { class: "when" }, "  " + ago(m.t)))))), "没有");
+  fill("outbox", [...s.outbox.map((o) => el("li", {}, el("span", { class: "chip src-needs" }, o.type || "消息"),
+      o.target ? `→ ${o.target.type} ${o.target.id}：` : "", cut(o.content || JSON.stringify(o), 160))),
+    ...s.gestures.map((g) => el("li", {}, el("span", { class: "chip src-self_model" }, g.kind), JSON.stringify(g)))], "没有");
+  kvs("limits", [["每群每小时最多", s.limits.group_per_hour + " 句"], ["对一个人 5 分钟最多", s.limits.person_5min + " 次"],
+    ["对疑似机器人 10 分钟最多", s.limits.botlike_10min + " 次"], ["每小时最多插话", s.limits.interjections_per_hour + " 次"]]);
+  fill("group-rate", Object.entries(s.group_rate).map(([g, n]) => bar("群 " + g, n, { max: s.limits.group_per_hour, color: "var(--warn)", fmt: (v) => String(v) })), "没有");
+  if (!settingsFilled) {
+    $("auto-groups-input").value = s.autonomous_groups.join(", ");
+    if (state) $("thought-interval").value = state.idle_thought_interval;
+    settingsFilled = true;
+  }
+};
+async function applySettings(body) {
+  try { const r = await api("settings", body); $("settings-result").textContent = r.result; render(r.state); loaders.social(); }
+  catch (err) { $("settings-result").textContent = "失败：" + err.message; }
+}
+$("auto-groups").addEventListener("submit", (ev) => { ev.preventDefault();
+  applySettings({ autonomous_groups: $("auto-groups-input").value.split(/[,，\s]+/).filter(Boolean) }); });
+$("mute-form").addEventListener("submit", (ev) => { ev.preventDefault();
+  const g = $("mute-group").value.trim(); if (!g) return;
+  applySettings(ev.submitter.dataset.mode === "mute" ? { mute_group: g, mute_minutes: Number($("mute-min").value) || 180 } : { unmute_group: g }); });
+$("thought-form").addEventListener("submit", (ev) => { ev.preventDefault();
+  applySettings({ idle_thought_interval: Number($("thought-interval").value) }); });
+document.querySelectorAll("[data-setting]").forEach((b) => b.addEventListener("click", () => applySettings({ [b.dataset.setting]: true })));
+
+// ---- 记忆 -------------------------------------------------------------------------------
+const TABLE = { interactions: "对话记录", episodes: "经历", semantic_facts: "事实", memories: "旧记忆", autobiography: "自传",
+                users: "认识的人", user_models: "人物模型", group_members: "群成员", group_relations: "群关系", relation_events: "关系事件",
+                trait_changes: "人格变化", value_changes: "价值变化", value_events: "价值事件", self_state: "状态快照",
+                state_causes: "情绪原因", beliefs: "信念", goals: "目标", stickers: "表情", group_phrases: "群语料", memes: "梗",
+                knowledge: "知识库", evolution_proposals: "改造提案", self_improvement: "自我改进" };
+function memItem(kind, r) {
+  const text = r.content || r.fact || "";
+  return el("li", {}, el("span", { class: "chip src-memory" }, kind + (r.kind ? "·" + (KIND[r.kind] || r.kind) : r.role ? "·" + (r.role === "assistant" ? "她" : "对方") : "")),
+    cut(text, 240), el("div", { class: "when" }, `${r.t ? ago(r.t) : ""} · ${r.user_id || ""}${r.group_id ? " · 群 " + r.group_id : ""}${r.visibility ? " · " + r.visibility : ""}${r.confidence != null ? " · 置信 " + n2(r.confidence) : ""}`));
+}
+loaders.memory = async (q) => {
+  const m = await api("memory" + (q ? "?q=" + encodeURIComponent(q) : ""));
+  $("mem-stats").replaceChildren(
+    el("div", {}, el("b", {}, (m.db_bytes / 1048576).toFixed(1) + " MB"), el("span", {}, "数据库大小")),
+    el("div", {}, el("b", {}, m.unconsolidated), el("span", {}, "还没整理的经历")),
+    ...Object.entries(m.counts).map(([k, v]) => el("div", {}, el("b", {}, v), el("span", {}, TABLE[k] || k))));
+  fill("facts", m.facts.map((f) => memItem("事实", f)), "还没有蒸馏出事实");
+  fill("autobio-history", m.autobiography.map((a) => el("li", {}, a.text, el("div", { class: "when" }, ago(a.t)))), "还没有");
+  if (m.results) {
+    const groups = [["经历", m.results.episodes], ["事实", m.results.facts], ["对话", m.results.interactions], ["旧记忆", m.results.memories]];
+    const total = groups.reduce((a, [, r]) => a + r.length, 0);
+    $("mem-results").replaceChildren(el("div", { class: "muted" }, `「${m.query}」共 ${total} 条`),
+      ...groups.filter(([, r]) => r.length).map(([name, rows]) =>
+        el("div", {}, el("h2", {}, `${name}（${rows.length}）`), el("ul", { class: "list" }, ...rows.map((r) => memItem(name, r))))));
+  }
+};
+$("mem-search").addEventListener("submit", (ev) => { ev.preventDefault();
+  loaders.memory($("mem-q").value.trim()).catch((err) => showError(err.message)); });
+
+// ---- 系统与日志 --------------------------------------------------------------------------
+let logSeq = 0, logPaused = false;
+loaders.system = async () => {
+  if (state) {
+    const ab = state.abilities || {};
+    const sense = (k, name) => el("span", {}, el("span", { class: "dot " + (ab[k] ? "on" : "off") }), name + (ab[k] ? " 可用" : " 不可用"));
+    $("sys").replaceChildren(
+      el("dt", {}, "感官"), el("dd", {}, sense("ocr", "QQ/OCR"), "　", sense("hear", "听觉"), "　", sense("see", "视觉")),
+      el("dt", {}, "语言后端"), el("dd", {}, state.backend),
+      el("dt", {}, "用量"), el("dd", {}, state.usage || "—"),
+      el("dt", {}, "模型调用记录"), el("dd", {}, `${state.llm_calls} 条（最多保留 40 条）`),
+      el("dt", {}, "改造通道"), el("dd", {}, state.evolve.enabled ? (state.evolve.in_progress ? "开启 · 运行中" : "开启") : "关闭"),
+      el("dt", {}, "待发消息"), el("dd", {}, String(state.queue)),
+      el("dt", {}, "服务器时间"), el("dd", {}, new Date(state.now * 1000).toLocaleString("zh-CN")));
+  }
+  if (logPaused) return;
+  const r = await api(`logs?after=${logSeq}&level=${$("log-level").value}`);
+  logSeq = r.seq;
+  const box = $("logbox"), atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 30, f = $("log-filter").value.trim();
+  for (const l of r.lines) {
+    if (f && !(l.msg.includes(f) || l.name.includes(f))) continue;
+    box.append(el("div", { class: "lv-" + l.level },
+      `${new Date(l.t * 1000).toLocaleTimeString("zh-CN", { hour12: false })} ${l.level.padEnd(7)} ${l.name}  ${l.msg}`));
+  }
+  while (box.childElementCount > 1500) box.firstChild.remove();
+  if (atBottom) box.scrollTop = box.scrollHeight;
+};
+$("log-pause").addEventListener("click", () => { logPaused = !logPaused; $("log-pause").textContent = logPaused ? "继续" : "暂停"; });
+$("log-clear").addEventListener("click", () => $("logbox").replaceChildren());
+$("log-level").addEventListener("change", () => { $("logbox").replaceChildren(); logSeq = 0; });
+$("qq-preset").addEventListener("change", () => {
+  const v = $("qq-preset").value; if (!v) return;
+  const [action, params] = v.split("|"); $("qq-action").value = action; $("qq-params").value = params;
+});
+$("qq-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const out = $("qq-out"); out.hidden = false;
+  let params;
+  try { params = JSON.parse($("qq-params").value || "{}"); } catch (e) { out.textContent = "参数不是合法 JSON：" + e.message; return; }
+  const b = ev.submitter; b.disabled = true; out.textContent = "调用中…";
+  try { out.textContent = JSON.stringify(await api("qq", { action: $("qq-action").value.trim(), params }), null, 2); }
+  catch (err) { out.textContent = "失败：" + err.message; }
+  finally { b.disabled = false; }
+});
+
 refresh();
 setInterval(refresh, 2000);
 document.addEventListener("visibilitychange", refresh);
+loadHistory().catch(() => {});
+try { const saved = localStorage.getItem("noa-console-tab"); if (saved && document.querySelector(`main[data-pane="${saved}"]`)) showTab(saved); } catch (e) {}
 </script>
 </body>
 </html>

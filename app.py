@@ -271,6 +271,7 @@ global_workspace.bot_accounts = {str(u) for u in config.get('BOT_ACCOUNTS', [])}
 vision_max_images = max(0, int(config.get('VISION_MAX_IMAGES', 2)))
 # 启动头几秒（第一次心跳之前）她也该知道自己能不能看图，不要先把"我看不见"写进人格
 global_workspace.abilities = {"ocr": False, "hear": False, "see": vision_engine is not None}
+global_workspace.qq = qq   # her tools read group history / member info through it
 
 # Level 17：改造自己的通道。默认关闭；只对创造者私聊和控制台开放；提案不会自动生效。
 if config.get('EVOLVE_ENABLED'):

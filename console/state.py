@@ -89,7 +89,196 @@ def snapshot(gw) -> Dict[str, Any]:
         "autonomous_groups": sorted(gw.autonomous_groups),
         "muted_groups": {g: t for g, t in gw.group_mute_until.items() if t > now},
         "idle_thought_interval": gw.idle_thought_interval,
+        "abilities": gw.abilities,
+        "evolve": {"enabled": bool(gw.evolve_enabled), "in_progress": gw.evolve_in_progress,
+                   "last": gw.last_evolve_result},
+        "llm_calls": len(gw.llm_trace),
+        "last_monologue": gw.monologues[-1] if gw.monologues else None,
+        "inbox": list(getattr(gw, "console_inbox", [])),
+        "tasks_pending": len(gw.tasks.pending()) if getattr(gw, "tasks", None) else 0,
     }
+
+# ---- the deeper views: loaded only when their tab is open ---------------------------------
+
+def _keyed(d: Dict[tuple, Any], now: float) -> List[Dict[str, Any]]:
+    """(group_id, user_id) -> until, for timers that are still running."""
+    out = []
+    for key, until in d.items():
+        if until > now:
+            group_id, user_id = (key + (None, None))[:2] if isinstance(key, tuple) else (key, None)
+            out.append({"group_id": group_id, "user_id": user_id, "until": until})
+    return out
+
+def mind(gw) -> Dict[str, Any]:
+    """How she decides: attention model, metacognition, values, drives, self-prediction, self-diagnosis."""
+    now = clock.now()
+    db = gw.memory.db.db_path
+    a = gw.attention_schema
+    h = gw.homeostasis
+    needs = {"hunger": h.hunger, "social": h.social_need, "hygiene": h.hygiene_need, "curiosity": h.curiosity_need}
+    try:
+        options = gw.drives.options(needs, gw.metabolism.energy, gw.user_models.private_users(),
+                                    goal_value=lambda action, target: gw.goals.value_for(action, target, now))
+    except Exception as e:
+        options, options_error = [], str(e)
+    else:
+        options_error = None
+    options.sort(key=lambda o: o.score, reverse=True)
+    try:
+        measures = gw.diagnosis.measure(gw, now)
+    except Exception:
+        measures = {}
+    sm = gw.self_model
+    return {
+        "now": now,
+        "attention": {
+            "focus": a.focus,
+            "predict": sorted(a.predict().items(), key=lambda x: -x[1])[:6],
+            "captures": [{"t": t, "from": f, "to": k, "content": c} for t, f, k, c in list(a.captures)[::-1]],
+            "suppressed": {k: v for k, v in a.suppressed.items() if v > now},
+            "disengaged": a.disengaged,
+            "history": [{"t": t, "kind": k, "content": c} for t, k, c in list(a.history)[-30:][::-1]],
+            "report": a.describe(now),
+        },
+        "workspace": {"capacity": gw.workspace.capacity, "threshold": gw.workspace.ignition_threshold,
+                      "noise": gw.workspace.noise},
+        "metacog": {"stats": gw.metacog.stats, "domains": gw.metacog.DOMAIN_WORDS,
+                    "pending": [{"user_id": u, **p} for u, p in gw.metacog.pending.items()],
+                    "verbal_confidence": gw.last_verbal_confidence},
+        "values": {
+            "weights": gw.values.weights,
+            "initial": gw.values.INITIAL,
+            "names": {k: list(v) for k, v in gw.values.VALUES.items()},
+            "last_appraisal": gw.values.last_appraisal,
+            "autonomy": gw.values.autonomy,
+            "tension": gw.values.tension,
+            "changes": gw.values.history(10),
+            "events": _rows(db, "SELECT t, name, kind, intensity, outcome, text, consolidated FROM value_events "
+                                "ORDER BY id DESC LIMIT 12"),
+        },
+        "drives": {
+            "options": [{"need": o.need, "action": o.action, "target": o.target,
+                         "nickname": (gw.memory.db.get_user(o.target) or {}).get("nickname") if o.target else None,
+                         "score": o.score, "pragmatic": o.pragmatic, "epistemic": o.epistemic,
+                         "cost": o.cost, "belief": o.belief} for o in options[:12]],
+            "error": options_error,
+            "temperature": gw.drives.temperature,
+            "next_action_in": max(0.0, gw.last_action_time + gw.min_action_interval - now),
+            "beliefs": _rows(db, "SELECT need, action, target, alpha, beta, n FROM beliefs ORDER BY n DESC LIMIT 20"),
+        },
+        "self_prediction": {"pending": sm.pending, "energy_error": sm.energy_error,
+                            "valence_error": sm.valence_error, "checks": sm.checks},
+        "temperament": {"style_edge": gw.style_edge},
+        "diagnosis": {
+            "measures": [{"key": k, **{f: m.get(f) for f in ("value", "threshold", "metric", "text", "evidence")}}
+                         for k, m in measures.items()],
+            "attempts": gw.diagnosis.attempts(limit=10),
+            "next_check_in": max(0.0, gw.last_self_check + gw.self_check_interval - now),
+            "improving": gw.self_improving,
+        },
+        "tasks": gw.tasks.recent(25) if getattr(gw, "tasks", None) else [],
+        "native_tools": gw._native_tools() if hasattr(gw, "_native_tools") else False,
+        "goals": _rows(db, "SELECT id, kind, text, target, why, steps, importance, progress, status, created, "
+                           "deadline, attempts, note FROM goals ORDER BY id DESC LIMIT 15"),
+        "timers": {
+            "consolidation_in": max(0.0, gw.last_consolidation + gw.consolidation_interval - now),
+            "snapshot_in": max(0.0, gw.last_snapshot_time + gw.snapshot_interval - now),
+            "thought_in": max(0.0, gw.last_thought_time + gw.idle_thought_interval - now),
+            "last_tick": gw.last_tick_time,
+        },
+    }
+
+def trace(gw, full: bool = False) -> Dict[str, Any]:
+    """What she thought before speaking, and every recent model call (prompts are long: cut unless asked)."""
+    cut = (lambda s: s) if full else (lambda s: s if s is None or len(s) <= 600 else s[:300] + " …… " + s[-300:])
+    calls = []
+    for i, r in enumerate(list(gw.llm_trace)):
+        calls.append({**r, "i": i, "prompt_len": len(r.get("prompt") or ""), "prompt": cut(r.get("prompt"))})
+    return {"monologues": list(gw.monologues)[::-1], "calls": calls[::-1],
+            "tools": list(getattr(gw, "tool_trace", []))[::-1]}
+
+def trace_call(gw, i: int) -> Dict[str, Any]:
+    calls = list(gw.llm_trace)
+    return calls[i] if 0 <= i < len(calls) else {}
+
+def social(gw) -> Dict[str, Any]:
+    """The state of every conversation: who she has left, who is on cooldown, what is unread."""
+    now = clock.now()
+    return {
+        "left": _keyed(gw.left_until, now),
+        "cooldown": _keyed(gw.cooldown_until, now),
+        "qq_muted": {g: t for g, t in gw.qq_muted_until.items() if t > now},
+        "muted": {g: t for g, t in gw.group_mute_until.items() if t > now},
+        "interjections": dict(gw.pending_interjections),
+        "unread": [{"user_id": k[0], "group_id": k[1], "messages": [{"t": t, "nickname": n, "text": x} for t, n, x in v]}
+                   for k, v in gw.unread.items()],
+        "group_rate": {g: sum(1 for t in q if now - t < 3600) for g, q in gw.group_spoke_at.items()},
+        "conversations": sorted(({"group_id": k[0], "user_id": k[1], "nickname": gw._nickname(k[1]) if k[1] else None,
+                                  "replies_10min": sum(1 for t in q if now - t < 600), "last": max(q) if q else None}
+                                 for k, q in gw.reply_log.items() if q), key=lambda c: -(c["last"] or 0))[:20],
+        "bots": sorted(gw.bot_accounts),
+        "autonomous_groups": sorted(gw.autonomous_groups),
+        "limits": {"group_per_hour": gw.max_group_messages_per_hour, "person_5min": gw.max_replies_per_person_5min,
+                   "botlike_10min": gw.max_replies_to_botlike_10min, "interjections_per_hour": gw.max_interjections_per_hour},
+        "outbox": list(gw.output_queue)[:20],
+        "gestures": [dict(g) for g in gw.gestures],
+    }
+
+MEMORY_TABLES = ("interactions", "episodes", "semantic_facts", "memories", "autobiography", "users", "user_models",
+                 "group_members", "group_relations", "relation_events", "trait_changes", "value_changes", "value_events",
+                 "self_state", "state_causes", "beliefs", "goals", "stickers", "group_phrases", "memes", "knowledge",
+                 "evolution_proposals", "self_improvement")
+
+def memory(gw, q: str = "", limit: int = 30) -> Dict[str, Any]:
+    """Counts of everything she keeps, and a plain-text search across what she remembers."""
+    import os
+    db = gw.memory.db.db_path
+    conn = sqlite3.connect(db)
+    counts = {}
+    for t in MEMORY_TABLES:
+        try:
+            counts[t] = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        except sqlite3.OperationalError:
+            pass
+    conn.close()
+    out = {"counts": counts, "db_bytes": os.path.getsize(db) if os.path.exists(db) else 0,
+           "unconsolidated": _rows(db, "SELECT COUNT(*) AS n FROM episodes WHERE consolidated=0")[0]["n"]
+                             if counts.get("episodes") is not None else 0,
+           "facts": _rows(db, "SELECT id, t, user_id, fact, confidence, visibility FROM semantic_facts ORDER BY id DESC LIMIT 15"),
+           "autobiography": _rows(db, "SELECT id, t, text FROM autobiography ORDER BY id DESC LIMIT 5")}
+    q = q.strip()
+    if q:
+        like = f"%{q}%"
+        out["query"] = q
+        out["results"] = {
+            "episodes": _rows(db, "SELECT id, t, kind, user_id, group_id, content, valence, surprise, visibility "
+                                  "FROM episodes WHERE content LIKE ? ORDER BY t DESC LIMIT ?", (like, limit)),
+            "facts": _rows(db, "SELECT id, t, user_id, fact, confidence, visibility FROM semantic_facts "
+                               "WHERE fact LIKE ? ORDER BY id DESC LIMIT ?", (like, limit)),
+            "interactions": _rows(db, "SELECT id, timestamp AS t, user_id, group_id, role, content FROM interactions "
+                                      "WHERE content LIKE ? ORDER BY id DESC LIMIT ?", (like, limit)),
+            "memories": _rows(db, "SELECT id, created_at AS t, user_id, category, content FROM memories "
+                                  "WHERE content LIKE ? ORDER BY id DESC LIMIT ?", (like, limit)),
+        }
+    return out
+
+def history(gw, hours: float = 24.0, points: int = 300) -> List[Dict[str, Any]]:
+    """Her saved state over time (one snapshot every few minutes), thinned to at most `points`."""
+    since = clock.now() - hours * 3600
+    rows = _rows(gw.memory.db.db_path, "SELECT t, cause, snapshot FROM self_state WHERE t >= ? ORDER BY t", (since,))
+    step = max(1, len(rows) // points)
+    out = []
+    for r in rows[::step]:
+        try:
+            s = json.loads(r["snapshot"])
+        except (TypeError, ValueError):
+            continue
+        emo = s.get("emotion") or {}
+        out.append({"t": r["t"], "cause": r["cause"], "energy": s.get("energy"), "sleeping": s.get("is_sleeping"),
+                    "needs": s.get("needs"), "anxiety": s.get("existential_anxiety"), "tension": s.get("tension"),
+                    "joy": emo.get("joy"), "sorrow": emo.get("sorrow"), "anger": emo.get("anger"),
+                    "fear": emo.get("fear")})
+    return out
 
 def to_json(data: Dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)

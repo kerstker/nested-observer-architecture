@@ -2,11 +2,14 @@ from typing import Optional, List, Dict, Any
 from collections import deque
 import asyncio
 import inspect
+import json
 import logging
 import math
 import os
 import re
 import random
+import sys
+import time
 import numpy as np
 from src.core import clock
 from ...core.event_bus import EventBus, EventType
@@ -27,6 +30,8 @@ from ...levels.l7_tom.tom import TheoryOfMind
 from ...levels.l7_tom.user_model import UserModelStore, SENTIMENT
 from ...levels.l8_agency.drives import DriveSystem, Option
 from ...levels.l8_agency.goals import GoalSystem
+from ...levels.l8_agency.tasks import TaskBook
+from ...levels.l8_agency.toolbox import Toolbox, ToolContext, parse_text_actions, when_text
 from .attention_schema import AttentionSchema
 from .metacognition import Metacognition
 from ...levels.l9_narrative.narrative import NarrativeSelf
@@ -108,6 +113,13 @@ class GlobalWorkspace:
         self.user_models = UserModelStore(db_path)
         self.drives = DriveSystem(db_path, rng=self.rng)
         self.goals = GoalSystem(db_path)
+        # Her tools, and the things she has said she will do (carried out by the heartbeat)
+        self.tasks = TaskBook(db_path)
+        self.toolbox = Toolbox(self)
+        self.qq = None                     # the app plugs in napcat.qq (group history, member info)
+        self.page_fetcher = None           # tests replace the web page reader
+        self.agent_max_steps = 4           # tool rounds per answer before she must just answer
+        self.console_inbox = deque(maxlen=30)   # what she says to the console outside a reply (task results)
         # Self-improvement closed loop: she diagnoses herself, DSH proposes, fitness decides, she checks later
         self.diagnosis = SelfDiagnosis(db_path)
         self.self_check_interval = 6 * 3600
@@ -166,6 +178,9 @@ class GlobalWorkspace:
         self.last_action_time = 0.0
         self.reply_delays: Dict[str, float] = {}
         self.last_generation_params: Dict[str, Any] = {}
+        # For the console: recent model calls, and what she thought before each reply (never sent)
+        self.llm_trace = deque(maxlen=40)
+        self.monologues = deque(maxlen=30)
 
         # Consolidation used to happen only while asleep, so a life lived mostly awake produced
         # no distilled facts at all (semantic_facts stayed empty). Consolidate on backlog instead.
@@ -436,6 +451,12 @@ class GlobalWorkspace:
                 self.drives.reward("social", "interject", group_id, 0.0, self._learning_gain())
                 self._decide("feedback", group_id, None, "我插的话没人接")
 
+        # Level 8c: what she said she would do, done when it is due
+        try:
+            await self._run_due_tasks(now)
+        except Exception as e:
+            logger.error(f"[Tasks] runner failed: {e}")
+
         if not self.metabolism.is_sleeping:
             # Workspace cycle on internal content alone (no input): the idle stream of consciousness
             winners = await self._cycle(self._internal_candidates())
@@ -651,7 +672,29 @@ class GlobalWorkspace:
             kwargs = {k: v for k, v in params.items() if k in accepted}
         except (TypeError, ValueError):
             kwargs = {}
-        return gen(prompt, **kwargs)
+        # Every call is kept (briefly) for the console: which part of her asked, what it saw, what came back
+        caller = sys._getframe(1).f_code.co_name
+        started = time.perf_counter()
+        record = {"t": clock.now(), "caller": caller, "params": {k: v for k, v in kwargs.items() if k != "media"},
+                  "media": len(kwargs.get("media") or []), "prompt": prompt}
+        try:
+            out = gen(prompt, **kwargs)
+        except Exception as e:
+            record.update(seconds=round(time.perf_counter() - started, 2), error=str(e))
+            self._keep_for_console("llm_trace", record, 40)
+            raise
+        record.update(seconds=round(time.perf_counter() - started, 2), reply=(out or {}).get("reply"),
+                      error=(out or {}).get("error"))
+        self._keep_for_console("llm_trace", record, 40)
+        return out
+
+    def _keep_for_console(self, name: str, item: Dict[str, Any], maxlen: int):
+        # Observability only: it must never be the reason she cannot answer
+        trace = getattr(self, name, None)
+        if trace is None:
+            trace = deque(maxlen=maxlen)
+            setattr(self, name, trace)
+        trace.append(item)
 
     # ------------------------------------------------------------------
     # Self-initiated behaviour
@@ -1037,12 +1080,28 @@ class GlobalWorkspace:
         return "为什么" in text and any(k in text for k in ("刚才", "那样", "这么", "生气", "难过", "开心", "害怕", "不高兴", "心情"))
 
     def _goals_from_conversation(self, user_input: str, reply: str, user_id: str, nickname: str,
-                                 group_id: Optional[str], domain: str, confidence: float, tool_context: str):
+                                 group_id: Optional[str], domain: str, confidence: float, tool_context: str,
+                                 scheduled: bool = False):
         """Where her goals come from in conversation: what she promised, what she could not answer, who she likes."""
         now = clock.now()
+        if scheduled:
+            return          # she wrote the promise down herself (schedule_task), with its own goal
         gid = self.goals.detect_promise(reply, user_id, nickname, user_input, now)
         if gid:
-            self._decide("goal", group_id, nickname, f"记下了：{self.goals.get(gid)['text']}")
+            g = self.goals.get(gid)
+            self._decide("goal", group_id, nickname, f"记下了：{g['text']}")
+            # A promise to find something out is work she can do herself: make it a task the
+            # heartbeat carries out, instead of a line she may or may not remember
+            if g["topic"]:
+                tomorrow = any(w in reply for w in ("明天", "过两天", "改天", "下次"))
+                due = now + (16 * 3600 if tomorrow else 5 * 60)
+                try:
+                    tid = self.tasks.add("do", f"{nickname} 问我「{user_input[:80]}」，我说了「{reply[:60]}」——"
+                                               "去查清楚，然后告诉 ta", due, now, user_id, nickname, group_id,
+                                         origin="promise", goal_id=gid)
+                    self._decide("goal", group_id, nickname, f"变成任务 #{tid}，{when_text(due, now)} 去做")
+                except ValueError as e:
+                    logger.info(f"[Tasks] promise not scheduled: {e}")
             return
         if domain == "knowledge" and (confidence < 0.45 or "搜索失败" in tool_context):
             gid = self.goals.add("learn", f"弄明白「{user_input[:30]}」（{nickname} 问过我，我没答上来）", now,
@@ -1600,7 +1659,9 @@ class GlobalWorkspace:
         if any(k in user_input.lower() for k in search_keywords):
              is_search_intent = True
 
-        if is_search_intent and self.inference_engine:
+        # With real tool calling she decides for herself whether to search (web_search); the keyword
+        # pre-search stays for the text protocol, where the model rarely writes the call correctly.
+        if is_search_intent and self.inference_engine and not self._native_tools():
              logger.debug("[Level 19] Heuristic detected potential search intent.")
              query_prompt = f"""<|im_start|>system
 You are a search intent classifier.
@@ -1675,23 +1736,20 @@ If not, output "NO".
                                         addressed=addressed,
                                         evolve_allowed=self._evolve_allowed(user_id, group_id),
                                         meta_context=meta_context.strip("\n"), media=media)
-        final_response_text = await asyncio.to_thread(self._generate_response, prompt, emo_state, params, media)
+        ctx = ToolContext(user_id, nickname, group_id, origin="reply",
+                          allow_evolve=self._evolve_allowed(user_id, group_id))
+        final_response_text = await self._respond(prompt, emo_state, params, media, ctx)
         verbal_confidence = self.last_verbal_confidence
+        if ctx.used:
+            self._decide("tools", group_id, nickname, "用了工具：" + "、".join(ctx.used), user_input[:60])
+        if "web_search" in ctx.used:
+            tool_context += "\n[System Info] 用工具搜索过" + ("（搜索失败）" if ctx.search_failed else "")
         # She says when a conversation fulfilled something she had set out to do
         for gid in {int(x) for x in re.findall(r"\[完成[:：]\s*(\d+)\]", final_response_text)}:
             g = self.goals.get(gid)
             if g and g["status"] == "active" and g["target"] in (None, user_id):
                 self._on_goal_ended(self.goals.complete(gid, now, f"和 {nickname} 聊的时候做到了"))
 
-        # Level 17: Tool Execution - results go back to the model, which then answers
-        if "Action:" in final_response_text:
-            execution_output = await asyncio.to_thread(self._handle_actions, final_response_text, user_id,
-                                                       group_id, self._evolve_allowed(user_id, group_id))
-            if execution_output:
-                followup = (prompt + final_response_text + "<|im_end|>\n<|im_start|>user\n"
-                            f"[工具结果]\n{execution_output}\n请根据工具结果直接回答我上一句话，不要再输出 Action。<|im_end|>\n"
-                            "<|im_start|>assistant\n")
-                final_response_text = await asyncio.to_thread(self._generate_response, followup, emo_state, params, media)
 
         # 8. Post-processing (Action appending & Memory Storage)
         final_response = self._finalize_response(final_response_text)
@@ -1708,7 +1766,7 @@ If not, output "NO".
                                    f"我对 {nickname} 实话说了我不确定：{final_response[:40]}", user_id)
             self.metacog.expect(user_id, final_response, domain, confidence, clock.now())
             self._goals_from_conversation(user_input, final_response, user_id, nickname, group_id, domain,
-                                          confidence["calibrated"], tool_context)
+                                          confidence["calibrated"], tool_context, scheduled=bool(ctx.scheduled))
         self.episodes.add(f"{nickname}：{user_input}\n我：{final_response or '（没有回）'}", kind="dialogue", user_id=user_id,
                           group_id=group_id, valence=self.emotion.valence(), arousal=self.emotion.arousal(),
                           surprise=surprise, conflict=conflict)
@@ -1945,7 +2003,9 @@ If not, output "NO".
 
         # Being able to change herself is a real capability, so it is stated as one - but only
         # in the one channel where it is actually available.
-        evolve_block, self_block, evolve_rule = "", "", ""
+        self_block, evolve_rule = "", ""
+        tools_block = self.toolbox.menu(ToolContext(user_id or "unknown", nickname, group_id,
+                                                    allow_evolve=evolve_allowed), self._native_tools())
         if evolve_allowed:
             running = "（正在跑一份提案）" if self.evolve_in_progress else ""
             self_block = ("[我知道自己是什么]\n"
@@ -1953,11 +2013,8 @@ If not, output "NO".
                           "- 我可以决定回不回、说什么；我的状态和记忆会跨重启延续。\n"
                           f"- 我上一次改自己是：{self._evolve_history()}{running}\n"
                           f"- 我自己发起的改进：{self.diagnosis.describe()}\n"
-                          "- 我有一条修改自己代码的通道（工具 4），提案要创造者批准后才会生效。\n")
-            evolve_block = ("4. EVOLVE：改我自己的代码。先生成一份提案（补丁 + 测试结果），"
-                            "等待创造者批准，不会立刻生效。\n"
-                            "   Action: EVOLVE task=\"想改什么、为什么、怎么验证\"\n")
-            evolve_rule = ("\n9. 创造者明确让你改自己的代码时，必须真的用工具 4（EVOLVE）去做，"
+                          "- 我有一条修改自己代码的通道（工具 evolve），提案要创造者批准后才会生效。\n")
+            evolve_rule = ("\n9. 创造者明确让你改自己的代码时，必须真的用工具 evolve 去做，"
                            "不许只在嘴上答应。你自己觉得哪里不好、想让自己变得更好时，也可以主动提出，"
                            "说清楚想改什么、为什么。")
         elif self.evolve_enabled:
@@ -1969,9 +2026,9 @@ If not, output "NO".
             instruction_block = """1. 你刚拿到实时搜索结果（见上方上下文），直接用它回答，不要再输出 Action: SEARCH。
 2. 说话自然，像刚用手机查到一样。"""
         else:
-            instruction_block = """1. 先想：是否需要外部信息（天气、新闻）？需要就用 SEARCH。
-2. 再说：生成回复。如果你用了工具，系统会把结果给你，你再回答。
-3. 不要连续两次使用同一个工具。"""
+            instruction_block = """1. 先想：需不需要查、回忆、记下什么？需要就先用工具（可以连着用几次），拿到结果再回答；不知道的事不要编。
+2. 答应了以后才做的事（等会儿告诉你、明天提醒你），用 schedule_task 记下来，不要只在嘴上说。
+3. 同一件事别反复调用同一个工具。"""
 
         # She really looks at the pictures of this message: the image blocks ride along with the
         # last user turn, so the text only has to say that the message came with pictures.
@@ -2010,10 +2067,7 @@ If not, output "NO".
 - 看起来的情绪：{tom_analysis['emotion']}。{tom_instruction}
 {shared_block}{self_block}{goal_block}
 [工具]
-1. RECALL：回忆长期记忆。Action: RECALL query="要回忆的内容"
-2. MEMORIZE：永久记住新知识。Action: MEMORIZE title="标题" content="内容" tags="标签1,标签2"
-3. SEARCH：上网查实时信息。Action: SEARCH query="搜索词"
-{evolve_block}
+{tools_block}
 [记忆与上下文]
 {context}
 
@@ -2053,31 +2107,210 @@ Response: [说出口的话]<|im_end|>
                     # The model could not be reached: say so in character instead of sending nothing
                     return "我这边好像卡了一下，刚才没看到你说什么，等会儿再说？"
 
-                # Parse Thought/Response. The model writes the colon either way ("Thought:" / "Thought："),
-                # and her inner monologue must never be sent as if she had said it.
-                # How sure she says she is: a verbal confidence report, never part of what she says
-                self.last_verbal_confidence = None
-                conf = re.search(r"Confidence\s*[:：]\s*(\d{1,3})\s*%?", raw_text)
-                if conf:
-                    self.last_verbal_confidence = min(100, int(conf.group(1))) / 100
-                    raw_text = (raw_text[:conf.start()] + raw_text[conf.end():]).strip()
-                response = raw_text
-                parts = re.split(r"Response\s*[:：]", raw_text, maxsplit=1)
-                if len(parts) == 2:
-                    thought = re.sub(r"^\s*Thought\s*[:：]", "", parts[0]).strip()
-                    response = parts[1].strip()
-                    if thought:
-                        logger.info(f"[Inner Monologue] {thought}")
-                elif re.match(r"\s*Thought\s*[:：]", raw_text):
-                    logger.info(f"[Inner Monologue] {raw_text.strip()}")
-                    response = ""   # only thinking, nothing said
-
-                return response
+                return self._parse_reply(raw_text, emo_state)
             except Exception as e:
                 logger.error(f"[GlobalWorkspace] LLM Error: {e}")
                 return f"[Error] {str(e)}"
         else:
             return f"[Mock LLM Response based on {emo_state}] I hear you."
+
+    def _parse_reply(self, raw_text: str, emo_state: str = "") -> str:
+        """Thought/Response/Confidence -> what she says. The model writes the colon either way
+        ("Thought:" / "Thought："), and her inner monologue must never be sent as if she had said it."""
+        # How sure she says she is: a verbal confidence report, never part of what she says
+        self.last_verbal_confidence = None
+        conf = re.search(r"Confidence\s*[:：]\s*(\d{1,3})\s*%?", raw_text)
+        if conf:
+            self.last_verbal_confidence = min(100, int(conf.group(1))) / 100
+            raw_text = (raw_text[:conf.start()] + raw_text[conf.end():]).strip()
+        response = raw_text
+        thought = ""
+        parts = re.split(r"Response\s*[:：]", raw_text, maxsplit=1)
+        if len(parts) == 2:
+            thought = re.sub(r"^\s*Thought\s*[:：]", "", parts[0]).strip()
+            response = parts[1].strip()
+            if thought:
+                logger.info(f"[Inner Monologue] {thought}")
+        elif re.match(r"\s*Thought\s*[:：]", raw_text):
+            thought = re.sub(r"^\s*Thought\s*[:：]", "", raw_text).strip()
+            logger.info(f"[Inner Monologue] {raw_text.strip()}")
+            response = ""   # only thinking, nothing said
+        self._keep_for_console("monologues", {"t": clock.now(), "thought": thought, "response": response,
+                                              "confidence": self.last_verbal_confidence, "emotion": emo_state}, 30)
+        return response
+
+    # ------------------------------------------------------------------
+    # Agency: answering with tools (several steps), and carrying out what she promised
+    # ------------------------------------------------------------------
+
+    def _native_tools(self) -> bool:
+        return bool(getattr(self.inference_engine, "supports_tools", False)
+                    and hasattr(self.inference_engine, "chat_tools"))
+
+    async def _respond(self, prompt: str, emo_state: str, params: Dict[str, Any], media, ctx: ToolContext) -> str:
+        """Generate what she says, letting her use tools first. Returns the parsed response text."""
+        if self._native_tools():
+            try:
+                return await self._respond_native(prompt, emo_state, params, media, ctx)
+            except Exception as e:
+                logger.error(f"[Agent] native tool loop failed, falling back to text: {e}")
+        return await self._respond_text(prompt, emo_state, params, media, ctx)
+
+    async def _respond_native(self, prompt, emo_state, params, media, ctx: ToolContext) -> str:
+        engine = self.inference_engine
+        self.last_generation_params = params
+        messages = engine.chatml_to_messages(prompt)
+        if media and hasattr(engine, "with_media"):
+            messages = engine.with_media(messages, media)
+        tools = self.toolbox.specs(ctx)
+        for step in range(self.agent_max_steps + 1):
+            last = step == self.agent_max_steps
+            started = time.perf_counter()
+            out = await asyncio.to_thread(engine.chat_tools, messages, None if last else tools,
+                                          int(params.get("max_tokens", 200)) + 150, params.get("temperature", 0.7))
+            self._keep_for_console("llm_trace", {
+                "t": clock.now(), "caller": f"agent_step_{step}" if ctx.origin == "reply" else f"task_step_{step}",
+                "params": {"max_tokens": int(params.get("max_tokens", 200)) + 150, "temperature": params.get("temperature"),
+                           "tools": len(tools) if not last else 0},
+                "media": len(media or []), "prompt": json.dumps(messages[-3:], ensure_ascii=False, default=str)[-6000:],
+                "seconds": round(time.perf_counter() - started, 2), "error": out.get("error"),
+                "reply": out.get("content") + ("".join(f"\n→ {c['name']}({json.dumps(c['arguments'], ensure_ascii=False)})"
+                                                       for c in out.get("tool_calls") or []))}, 40)
+            if out.get("error") and not out.get("content") and not out.get("tool_calls"):
+                if step == 0:
+                    raise RuntimeError(out["error"])
+                break
+            calls = out.get("tool_calls") or []
+            if not calls:
+                return self._parse_reply(out.get("content") or "", emo_state)
+            messages.append(out.get("raw") or {"role": "assistant", "content": out.get("content") or None})
+            for c in calls:
+                logger.info(f"[Agent] {ctx.nickname or ctx.user_id} -> {c['name']}({c['arguments']})")
+                result = await self.toolbox.run(c["name"], c["arguments"], ctx)
+                messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
+            if step == self.agent_max_steps - 1:
+                messages.append({"role": "user", "content": "（工具已经用够了，现在根据拿到的结果直接回答，按 Thought/Response 格式。）"})
+        return self._parse_reply(out.get("content") or "", emo_state) if out.get("content") else ""
+
+    async def _run_due_tasks(self, now: float, limit: int = 2):
+        """The heartbeat keeps her word: reminders ring even while she sleeps; work waits until she is awake."""
+        ran = 0
+        for t in self.tasks.due(now):
+            if ran >= limit:
+                break
+            if t["kind"] == "do" and (self.metabolism.is_sleeping or not self.inference_engine):
+                continue
+            ran += 1
+            await self._run_task(t)
+
+    def _task_prompt(self, t: Dict[str, Any], name: str, ctx: ToolContext) -> str:
+        where = f"群 {t['group_id']}" if t["group_id"] else "私聊"
+        about = self.user_models.describe(t["user_id"]) if t["user_id"] else ""
+        return f"""<|im_start|>system
+{self._build_persona_prompt()}
+
+[要做的事]
+这是你之前答应 {name} 的（ta 是在{where}里跟你说的，{format_duration(clock.now() - t['created'])}前）：
+{t['what']}
+{about}
+现在去把它做完：需要就用工具（搜索、打开网页、回忆），拿到结果后写要发给 ta 的话。
+查不到、做不到就如实说，不要编。{"这是在群里，开头叫一下 ta 的名字。" if t['group_id'] else ""}
+
+[工具]
+{self.toolbox.menu(ctx, self._native_tools())}
+
+[输出格式]
+Thought: 你心里怎么想的（不会发出去）
+Response: 要发给 ta 的话（可以分几行，每行一条消息；不写动作描写）
+<|im_end|>
+<|im_start|>user
+（到时间了，去做吧）<|im_end|>
+<|im_start|>assistant
+"""
+
+    def _task_reminder_text(self, t: Dict[str, Any], name: str) -> str:
+        fallback = f"{name + '，' if t['group_id'] else ''}提醒你一下：{t['what']}"
+        if not self.inference_engine:
+            return fallback
+        prompt = f"""<|im_start|>system
+{self._build_persona_prompt()}
+
+你之前答应过 {name}，到这个时间提醒 ta：{t['what']}
+现在到时间了。用你平时说话的样子写一句提醒（{"这是在群里，开头叫一下 ta 的名字；" if t['group_id'] else ""}只输出那句话，不要引号、不要动作描写）。
+<|im_end|>
+<|im_start|>assistant
+"""
+        try:
+            text = self._finalize_response((self._llm(prompt, max_tokens=80, temperature=0.6) or {}).get("reply") or "")
+        except Exception as e:
+            logger.error(f"[Tasks] reminder wording failed: {e}")
+            text = ""
+        return text if len(text) > 4 else fallback
+
+    def _deliver(self, t: Dict[str, Any], message: str):
+        """Send what a task produced to whoever it was for, where they asked."""
+        uid, gid = t["user_id"], t["group_id"]
+        if not uid or not str(uid).isdigit():                 # the console, tests: nobody to send a QQ message to
+            self.console_inbox.append({"t": clock.now(), "task": t["id"], "user_id": uid, "text": message})
+            return
+        if gid:
+            self.output_queue.append({"type": "task", "content": message, "in_reply": True,
+                                      "target": {"type": "group", "id": gid}})
+        else:
+            self.output_queue.append({"type": "task", "content": message, "target": {"type": "private", "id": uid}})
+        self.memory.add_message(uid, "assistant", message, group_id=gid)
+
+    async def _run_task(self, t: Dict[str, Any]):
+        now = clock.now()
+        name = t["nickname"] or self._nickname(t["user_id"])
+        self.tasks.start(t["id"])
+        ctx = ToolContext(t["user_id"], name, t["group_id"], origin="task")
+        try:
+            if t["kind"] == "remind":
+                message = await asyncio.to_thread(self._task_reminder_text, t, name)
+            else:
+                params = {"max_tokens": 300, "temperature": 0.6}
+                raw = await self._respond(self._task_prompt(t, name, ctx), self.emotion.get_compound_state(),
+                                          params, None, ctx)
+                message = self._finalize_response(raw or "")
+            if not message or self._is_silence(message) or message.startswith("[Error]"):
+                raise RuntimeError("没写出要说的话")
+        except Exception as e:
+            logger.error(f"[Tasks] #{t['id']} failed: {e}")
+            if self.tasks.retry_or_fail(t["id"], str(e), clock.now()):
+                self._decide("task", t["group_id"], name, f"任务 #{t['id']} 没做成：{t['what'][:50]}（{e}）")
+                if t.get("goal_id"):
+                    self._on_goal_ended(self.goals.abandon(t["goal_id"], clock.now(), f"试了几次都没做成：{e}"))
+            return
+        self._deliver(t, message)
+        self.tasks.finish(t["id"], message, clock.now())
+        tools = f"（用了：{'、'.join(ctx.used)}）" if ctx.used else ""
+        self._decide("task", t["group_id"], name, f"完成任务 #{t['id']}{tools}：{t['what'][:50]}", message[:80])
+        self.episodes.add(f"我兑现了答应 {name} 的事：{t['what'][:80]}\n我：{message}", kind="dialogue",
+                          user_id=t["user_id"], group_id=t["group_id"], valence=max(0.2, self.emotion.valence()),
+                          arousal=0.3)
+        if t.get("goal_id"):
+            self._on_goal_ended(self.goals.complete(t["goal_id"], now, f"任务 #{t['id']} 做完了"))
+
+    async def _respond_text(self, prompt, emo_state, params, media, ctx: ToolContext) -> str:
+        """The text protocol (local model): `Action: 工具 {...}` lines, results fed back, a few rounds."""
+        response = await asyncio.to_thread(self._generate_response, prompt, emo_state, params, media)
+        transcript = prompt
+        for round_ in range(min(3, self.agent_max_steps)):
+            actions = parse_text_actions(response)
+            if not actions:
+                break
+            results = []
+            for name, args in actions[:3]:
+                logger.info(f"[Agent] (text) {ctx.nickname or ctx.user_id} -> {name}({args})")
+                results.append(f"[{name}] {await self.toolbox.run(name, args, ctx)}")
+            final = round_ == min(3, self.agent_max_steps) - 1
+            transcript = (transcript + response + "<|im_end|>\n<|im_start|>user\n[工具结果]\n" + "\n\n".join(results)
+                          + ("\n请根据工具结果直接回答我上一句话，不要再输出 Action。" if final else
+                             "\n根据工具结果回答我上一句话；还需要别的工具就再写 Action，否则直接回答。")
+                          + "<|im_end|>\n<|im_start|>assistant\n")
+            response = await asyncio.to_thread(self._generate_response, transcript, emo_state, params, media)
+        return response
 
     def _handle_actions(self, response_text: str, user_id: str, group_id: Optional[str] = None,
                         allow_evolve: bool = False) -> Optional[str]:

@@ -10,6 +10,7 @@ from src.levels.l19_search.web_search import WebSearchTool
 
 def offline_search_tool() -> WebSearchTool:
     tool = WebSearchTool()
+    tool._ddgs_search = lambda q, n: []
     tool._baidu_search = lambda q, n: []
     tool._ddg_search = lambda q, n: []
     return tool

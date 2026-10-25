@@ -156,3 +156,22 @@ class TestPictures(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestToolCalling(unittest.TestCase):
+    def test_tool_calls_come_back_structured(self):
+        message = {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "call_1", "type": "function", "function": {"name": "web_search", "arguments": "{\"query\": \"天气\"}"}}]}
+        e, session = engine([FakeResponse(200, {"choices": [{"message": message}], "usage": {}})])
+        tools = [{"type": "function", "function": {"name": "web_search", "parameters": {"type": "object"}}}]
+        out = e.chat_tools([{"role": "user", "content": "天气"}], tools, max_tokens=100, temperature=0.5)
+        self.assertEqual(out["tool_calls"], [{"id": "call_1", "name": "web_search", "arguments": {"query": "天气"}}])
+        self.assertEqual(out["raw"]["tool_calls"], message["tool_calls"])
+        body = session.requests[0]["body"]
+        self.assertEqual((body["tools"], body["tool_choice"], body["thinking"]), (tools, "auto", {"type": "disabled"}))
+
+    def test_no_tools_means_a_plain_answer_and_failures_are_reported(self):
+        e, session = engine([ok("Response: 好"), FakeResponse(400, text="bad")])
+        out = e.chat_tools([{"role": "user", "content": "hi"}], None)
+        self.assertEqual((out["content"], out["tool_calls"]), ("Response: 好", []))
+        self.assertNotIn("tools", session.requests[0]["body"])
+        self.assertTrue(e.chat_tools([{"role": "user", "content": "hi"}], None)["error"])

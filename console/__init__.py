@@ -7,14 +7,17 @@ Noa 控制台：在浏览器里实时看她的内心状态、和她说话、做�
 """
 import asyncio
 import hmac
+import logging
 import os
+from collections import deque
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
-from .state import snapshot, to_json
+from src.core import clock
+from .state import snapshot, mind, trace, trace_call, social, memory, history, to_json
 
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 PAGE = os.path.join(os.path.dirname(__file__), "index.html")
@@ -34,6 +37,22 @@ class EvolveRequest(BaseModel):
     task: str = ""
     id: str = ""
 
+class SettingsRequest(BaseModel):
+    idle_thought_interval: Optional[float] = None
+    autonomous_groups: Optional[list] = None
+    unmute_group: Optional[str] = None
+    mute_group: Optional[str] = None
+    mute_minutes: float = 180
+    clear_left: bool = False
+    clear_cooldown: bool = False
+    clear_unread: bool = False
+
+class TaskRequest(BaseModel):
+    id: int = 0
+    kind: str = "remind"
+    what: str = ""
+    minutes: float = 10
+
 class QqRequest(BaseModel):
     action: str
     params: dict = {}
@@ -43,8 +62,33 @@ class QqRequest(BaseModel):
 # (appraisal, cause log, episode) exactly like the same words from QQ would be.
 SPOKEN_ACTIONS = {"feed": "喂你吃小鱼干", "pet": "摸摸头"}
 
+class LogBuffer(logging.Handler):
+    """The last few hundred log lines, for the console (the files are on disk; this is what is happening now)."""
+    def __init__(self, size: int = 500):
+        super().__init__(logging.INFO)
+        self.lines = deque(maxlen=size)
+        self.seq = 0
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            self.seq += 1
+            self.lines.append({"seq": self.seq, "t": record.created, "level": record.levelname,
+                               "name": record.name, "msg": record.getMessage()})
+        except Exception:
+            pass
+
+def _install_log_buffer() -> LogBuffer:
+    root = logging.getLogger()
+    for h in root.handlers:
+        if isinstance(h, LogBuffer):
+            return h
+    buf = LogBuffer()
+    root.addHandler(buf)
+    return buf
+
 def create_console_router(gw, token: str = None) -> APIRouter:
     router = APIRouter(prefix="/console")
+    logs = _install_log_buffer()
 
     def authorize(request: Request):
         if token:
@@ -100,9 +144,101 @@ def create_console_router(gw, token: str = None) -> APIRouter:
         elif a == "tick":
             await gw.tick()
             result = "心跳了一次"
+        elif a == "snapshot":
+            await asyncio.to_thread(gw._save_state, "console")
+            result = "存了一份状态快照"
+        elif a == "selfcheck":
+            found = await asyncio.to_thread(gw.diagnosis.diagnose, gw, clock.now())
+            result = ("自检发现：" + "；".join(f"{f['text']}（{f['evidence']}）" for f in found)) if found                 else "自检：没有超过阈值的问题"
         else:
             raise HTTPException(400, f"未知操作：{a}")
         return json_response({"result": result, "state": await asyncio.to_thread(snapshot, gw)})
+
+    # ---- 更深的视图：只在对应标签页打开时才拉 ----
+    @router.get("/api/mind")
+    async def mind_view(request: Request):
+        authorize(request)
+        return json_response(await asyncio.to_thread(mind, gw))
+
+    @router.get("/api/trace")
+    async def trace_view(request: Request, full: bool = False):
+        authorize(request)
+        return json_response(trace(gw, full))
+
+    @router.get("/api/trace/{i}")
+    async def trace_one(i: int, request: Request):
+        authorize(request)
+        return json_response(trace_call(gw, i))
+
+    @router.get("/api/social")
+    async def social_view(request: Request):
+        authorize(request)
+        return json_response(social(gw))
+
+    @router.get("/api/memory")
+    async def memory_view(request: Request, q: str = ""):
+        authorize(request)
+        return json_response(await asyncio.to_thread(memory, gw, q))
+
+    @router.get("/api/history")
+    async def history_view(request: Request, hours: float = 24.0):
+        authorize(request)
+        return json_response(await asyncio.to_thread(history, gw, max(0.1, min(hours, 24 * 30))))
+
+    @router.get("/api/logs")
+    async def logs_view(request: Request, after: int = 0, level: str = ""):
+        authorize(request)
+        rows = [r for r in logs.lines if r["seq"] > after and (not level or r["level"] == level)]
+        return json_response({"seq": logs.seq, "lines": rows[-300:]})
+
+    @router.post("/api/tasks")
+    async def task_add(body: TaskRequest, request: Request):
+        authorize(request)
+        now = clock.now()
+        try:
+            tid = gw.tasks.add(body.kind, body.what, now + max(0.0, body.minutes) * 60, now, "console", "控制台",
+                               origin="console")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return json_response({"id": tid})
+
+    @router.post("/api/tasks/cancel")
+    async def task_cancel(body: TaskRequest, request: Request):
+        authorize(request)
+        t = gw.tasks.cancel(body.id, "console", True, clock.now())
+        if not t:
+            raise HTTPException(400, "取消不了（不存在或已经结束）")
+        if t.get("goal_id"):
+            gw.goals.abandon(t["goal_id"], clock.now(), "在控制台被取消了")
+        return json_response(t)
+
+    @router.post("/api/settings")
+    async def settings(body: SettingsRequest, request: Request):
+        authorize(request)
+        done = []
+        now = clock.now()
+        if body.idle_thought_interval is not None:
+            gw.idle_thought_interval = max(10.0, float(body.idle_thought_interval))
+            done.append(f"念头最短间隔 = {gw.idle_thought_interval:.0f} 秒")
+        if body.autonomous_groups is not None:
+            gw.autonomous_groups = {str(g).strip() for g in body.autonomous_groups if str(g).strip()}
+            done.append(f"可自己开口的群 = {'、'.join(sorted(gw.autonomous_groups)) or '无'}")
+        if body.mute_group:
+            gw.group_mute_until[body.mute_group] = now + max(1.0, body.mute_minutes) * 60
+            done.append(f"群 {body.mute_group} 安静 {body.mute_minutes:.0f} 分钟")
+        if body.unmute_group:
+            gw.group_mute_until.pop(body.unmute_group, None)
+            done.append(f"群 {body.unmute_group} 解除安静")
+        if body.clear_left:
+            gw.left_until.clear()
+            done.append("回到所有她离开的对话")
+        if body.clear_cooldown:
+            gw.cooldown_until.clear()
+            done.append("清除硬上限冷却")
+        if body.clear_unread:
+            gw.unread.clear()
+            done.append("清空未读")
+        return json_response({"result": "；".join(done) or "没有改动", "state": await asyncio.to_thread(snapshot, gw)})
 
     # ---- Level 17: proposals to change her own code -------------------------------------
     # Creating one runs an agent in a throwaway copy of the repo (minutes). Applying one is

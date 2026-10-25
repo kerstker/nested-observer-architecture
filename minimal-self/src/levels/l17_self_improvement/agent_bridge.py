@@ -111,7 +111,7 @@ def _runs_ok(text: str) -> Dict[str, int]:
 
 class DshAgentBridge:
     def __init__(self, repo_root: str, data_dir: str = None, dsh_exe: str = None, dsh_bin: str = None,
-                 timeout: float = 900.0, max_patch_lines: int = 300, max_per_day: int = 1):
+                 timeout: float = 1200.0, max_patch_lines: int = 300, max_per_day: int = 1):
         self.repo_root = os.path.abspath(repo_root)
         self.data_dir = data_dir or os.path.join(self.repo_root, "data", "evolution")
         self.dsh_exe = dsh_exe or os.environ.get("DSH_EXE") or DEFAULT_DSH_EXE
@@ -154,9 +154,18 @@ class DshAgentBridge:
 
     # ------------------------------------------------------------------ workspace
     def _copy_repo(self, dest: str):
+        dest_abs = os.path.abspath(dest)
+
         def ignore(directory, names):
-            return {n for n in names if n in SKIP_DIRS or n.endswith(SKIP_SUFFIXES)}
-        shutil.copytree(self.repo_root, dest, ignore=ignore)
+            skipped = {n for n in names if n in SKIP_DIRS or n.endswith(SKIP_SUFFIXES)}
+            # Never descend into the directory the copy itself is being written to.
+            for n in names:
+                full = os.path.abspath(os.path.join(directory, n))
+                if full == dest_abs or dest_abs.startswith(full + os.sep):
+                    skipped.add(n)
+            return skipped
+
+        shutil.copytree(self.repo_root, dest_abs, ignore=ignore)
 
     def _git(self, cwd: str, *args: str) -> str:
         proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
@@ -205,13 +214,24 @@ class DshAgentBridge:
                     continue
                 if msg.get("id") == mid:
                     return msg
-                # session/update notifications carry the agent's progress and final text
+                # ACP progress/final text arrives as session/update notifications:
+                #   {"method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk",
+                #                                                    "content":{"type":"text","text":"..."}}}}
                 if msg.get("method") == "session/update":
                     update = (msg.get("params") or {}).get("update") or {}
-                    for key in ("text", "content", "summary"):
-                        val = update.get(key)
-                        if isinstance(val, str):
-                            state["texts"].append(val)
+                    text = None
+                    content = update.get("content")
+                    if isinstance(content, dict):
+                        text = content.get("text")
+                    elif isinstance(content, str):
+                        text = content
+                    if text is None:
+                        for key in ("text", "summary", "title"):
+                            if isinstance(update.get(key), str):
+                                text = update[key]
+                                break
+                    if isinstance(text, str) and text:
+                        state["texts"].append(text)
             return None
 
         try:

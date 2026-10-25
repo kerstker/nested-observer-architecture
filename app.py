@@ -253,6 +253,8 @@ if config.get('EVOLVE_ENABLED'):
             os.path.dirname(os.path.abspath(__file__)),
             dsh_exe=config.get('DSH_EXE') or None,
             dsh_bin=config.get('DSH_BIN') or None,
+            timeout=float(config.get('EVOLVE_TIMEOUT', 1200)),
+            max_patch_lines=int(config.get('EVOLVE_MAX_PATCH_LINES', 300)),
             max_per_day=int(config.get('EVOLVE_MAX_PER_DAY', 1)),
         )
         global_workspace.evolve_enabled = True

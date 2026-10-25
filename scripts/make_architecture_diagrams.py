@@ -68,7 +68,7 @@ def structure():
     ax.axis("off")
 
     ax.text(2, 82.4, "乃爱（Noa）· 架构全貌", fontsize=20, fontweight="bold", color=INK)
-    ax.text(2, 80.3, "数字生命实验｜单进程 Python（状态机 + 提示词拼装器）+ 三个外部小脑（NapCat / 语音 / 视觉）｜2026-10-25",
+    ax.text(2, 80.3, "数字生命实验｜单进程 Python（状态机 + 提示词拼装器）+ NapCat / 语音两个外部小脑 + 图片直接进主对话｜2026-10-25",
             fontsize=9, color=GREY)
 
     # ================= column 1: outside =================
@@ -78,11 +78,11 @@ def structure():
     box(ax, 3.0, 59.0, 28.5, 7.2, "NapCat 4.18.41 + QQ NT",
         ["OneBot v11 反向 WebSocket", "ws://127.0.0.1:8080/onebot/v11/ws/noa", "OCR / 语音转码 / 取图它都有"], "ext")
     box(ax, 3.0, 49.0, 28.5, 8.2, "napcat/ 感知适配",
-        ["napcat_server：事件分发 · echo 与响应", "qq.py：perceive() 消息段 → 人看到的样子", "notice()：戳/撤回/进群/禁言/表情", "senses.py：听觉 · 视觉"], "io")
+        ["napcat_server：事件分发 · echo 与响应", "qq.py：perceive() 消息 / notice() 事件", "qq.media()：图片原样交给她（看图）", "senses.py：听觉（图交给主对话）"], "io")
     box(ax, 3.0, 39.5, 28.5, 8.2, "L1 感知",
         ["sensory：痛 / 触摸 / 喂食", "environment：昼夜 / 天气 / 节日", "group_language：群语料 / 梗", "stickers：表情库 + 使用语境"], "perc")
     box(ax, 3.0, 31.5, 28.5, 6.4, "能力自查（真实）",
-        ["ocr=读图上的字 · hear=听语音", "see=看懂图片 · 缺失她就说自己看不见"], "perc", fill="#faf5ff")
+        ["ocr=读图上的字 · hear=听语音", "see=图片随消息进主对话（DS API）"], "perc", fill="#faf5ff")
 
 
     # ================= column 2: inside =================
@@ -138,7 +138,7 @@ def structure():
         ["实时状态 · 决策流水 · 意识流", "情绪因果 · 人格变化 · 目标", "和她说话 / 喂食 / 睡觉 / 做梦",
          "evolve 提案列表 · QQ 调试接口"], "data", fs=7.2)
     box(ax, 60.7, 4.6, 27.0, 11.0, "外部服务",
-        ["NapCat :6099（WebUI）", "Whisper :8091（听觉，可用）", "DeepSeek-VL2 :8092（视觉，停用）",
+        ["NapCat :6099（WebUI）", "Whisper :8091（听觉，可用）", "DS API（deepseek-flash：说话 + 看图）",
          "LoRA :8093（她自己的模型）"], "data", fs=7.2)
     box(ax, 89.0, 4.6, 27.0, 11.0, "仓库与备份",
         ["git：可回滚的代码史", "data/stickers · data/evolution/", "memory.pre-*.sqlite 备份", "models/ 本地模型"], "data", fs=7.2)
@@ -190,7 +190,7 @@ def runtime():
     steps = [
         (3.5, 53.0, "消息事件", ["段数组", "图片/语音/转发"]),
         (18.5, 53.0, "去重 · 限流", ["1s/人", "500 条 LRU"]),
-        (18.5, 44.0, "qq.perceive", ["OCR · 语音转写", "引用/转发/卡片"]),
+        (18.5, 44.0, "qq.perceive", ["OCR · 语音 · 引用/转发", "qq.media：图片原样"]),
         (33.5, 53.0, "hear()", ["睡? 静音? 离开?", "硬上限? 插话?"]),
         (33.5, 44.0, "处理 & 评估", ["感知→情绪→预测误差", "工作区竞争取 2"]),
         (48.5, 53.0, "召回 + 记忆", ["私聊/群/公开", "分区检索"]),
@@ -253,7 +253,7 @@ def runtime():
     # D: processes
     panel(ax, 1.5, -11.0, 117.0, 11.6, "D. 进程与服务（全部本机）", "data")
     procs = [("app.py :8080", "uvicorn + tick + 控制台"), ("NapCat :6099", "→ :8080 反向 WS"),
-             ("hear :8091", "Whisper 可用"), ("see :8092", "VL2 停用(xformers)"),
+             ("hear :8091", "Whisper 可用"), ("DS API 视觉", "图片进主对话"),
              ("LoRA :8093", "她自己的模型"), ("DSH ACP", "按需子进程"), ("memory.sqlite", "一个文件 = 一生")]
     for i, (t, d) in enumerate(procs):
         x = 2.6 + i * 16.4

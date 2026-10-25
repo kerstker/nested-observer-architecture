@@ -15,11 +15,12 @@ import re
 import sqlite3
 import tempfile
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 
 from src.core import clock
 from src.core.clock import SimClock, Clock
 from src.core.event_bus import EventBus
+from src.core.workspace import Candidate
 from src.levels.l10_consciousness.global_workspace import GlobalWorkspace, format_duration
 
 START = datetime(2026, 1, 5, 8, 0).timestamp()   # a Monday, 08:00 local time
@@ -99,8 +100,15 @@ class Life:
             if on_step:
                 on_step(self)
 
-def _result(name: str, passed: bool, measured: str, criterion: str, note: str = "") -> Dict[str, Any]:
-    return {"name": name, "passed": bool(passed), "measured": measured, "criterion": criterion, "note": note}
+# Numeric measurements some scenarios report, and which way is better. Self-improvement uses them
+# as a graded fitness signal on top of pass/fail (see l17_self_improvement/fitness.py).
+METRIC_DIRECTIONS = {"calibration_gap": "lower", "rumination_share": "lower", "hours_to_keep": "lower",
+                     "bot_replies": "lower", "share_reliable": "higher", "curiosity_drop": "higher"}
+
+def _result(name: str, passed: bool, measured: str, criterion: str, note: str = "",
+            metrics: Dict[str, float] = None) -> Dict[str, Any]:
+    return {"name": name, "passed": bool(passed), "measured": measured, "criterion": criterion, "note": note,
+            "metrics": {k: float(v) for k, v in (metrics or {}).items()}}
 
 def _restore_clock():
     clock.set_clock(Clock())
@@ -245,7 +253,247 @@ def learning_who_answers(seed: int = 0, days: int = 7) -> Dict[str, Any]:
         return _result("从结果中学习", len(choices) >= 6 and second >= 0.8,
                        f"一周内主动找人 {len(choices)} 次；找 A 的比例 前半 {first:.0%} → 后半 {second:.0%}；"
                        f"Q(找A)={life.gw.drives.q('social', 'chat', 'A'):.2f}，Q(找B)={life.gw.drives.q('social', 'chat', 'B'):.2f}",
-                       "后半段找 A 的比例 ≥ 80%")
+                       "后半段找 A 的比例 ≥ 80%", metrics={"share_reliable": second})
+    finally:
+        _restore_clock()
+
+def curiosity_from_uncertainty(seed: int = 0, days: int = 4) -> Dict[str, Any]:
+    """After A has become a sure thing, a stranger C appears: not knowing C is itself a reason to reach out."""
+    try:
+        life = Life(seed)
+        life.say("你好呀", user_id="A", nickname="阿甲")
+        drives = life.gw.drives
+        for _ in range(25):                                  # she already knows A answers
+            drives.reward("social", "chat", "A", 1.0)
+        life.say("你好，我是新来的", user_id="C", nickname="阿丙")
+        eig_a, eig_c0 = drives.uncertainty("social", "chat", "A"), drives.uncertainty("social", "chat", "C")
+        choices: List[str] = []
+        replies: List[Tuple[float, str]] = []
+
+        def on_step(l: Life):
+            while l.gw.output_queue:
+                target = (l.gw.output_queue.pop(0).get("target") or {}).get("id")
+                if target:
+                    choices.append(target)
+                    replies.append((l.clock.now() + 120, target))      # both answer
+            for item in [r for r in replies if r[0] <= l.clock.now()]:
+                replies.remove(item)
+                l.say("在呢，怎么啦", user_id=item[1], nickname="阿甲" if item[1] == "A" else "阿丙")
+
+        life.advance(days * 86400, step=600, on_step=on_step)
+        # Whatever way she approached C (a chat or asking for a snack), what she learned is what she now knows
+        eig_c1 = min(drives.uncertainty("social", "chat", "C"), drives.uncertainty("hunger", "ask_food", "C"))
+        first_c = choices.index("C") + 1 if "C" in choices else None
+        passed = first_c is not None and eig_c0 > 3 * eig_a and eig_c1 < 0.6 * eig_c0
+        return _result("好奇心来自不确定性", passed,
+                       f"想弄清楚的程度：A {eig_a:.3f}，陌生人 C {eig_c0:.3f} → 相处后 {eig_c1:.3f}；"
+                       f"{days} 天内主动找人 {len(choices)} 次，其中找 C {choices.count('C')} 次"
+                       f"（第一次是第 {first_c} 次）",
+                       "她会主动去了解陌生人，而且了解之后好奇心下降",
+                       metrics={"curiosity_drop": 1 - eig_c1 / max(1e-9, eig_c0)})
+    finally:
+        _restore_clock()
+
+def attention_schema_control(seed: int = 0, hours: float = 10.0) -> Dict[str, Any]:
+    """A worry that keeps winning attention. With a model of her own attention she notices and lets go."""
+    def run(control: bool):
+        life = Life(seed)
+        life.gw.attention_schema.control = control
+        life.gw.environment.get_context = lambda: {"time": "12:00", "period": "Day", "weather": "Sunny",
+                                                   "festival": None, "is_night": False}
+        life.gw.pending_candidates.append(Candidate(
+            "prediction", "ignored", "小红一直没回我消息，是不是我说错什么了", 0.8,
+            {"user_id": "r", "sticky_for": "r", "until": life.clock.now() + 24 * 3600}))
+        held, cycles, agree = 0, 0, 0
+
+        def on_step(l: Life):
+            nonlocal held, cycles, agree
+            trace = l.gw.workspace.trace
+            if trace and trace[-1][0] == l.clock.now():
+                cycles += 1
+                held += trace[-1][1][0].kind == "ignored"
+                agree += (l.gw.attention_schema.focus or {}).get("kind") == l.gw.workspace.attention
+        life.advance(hours * 3600, step=600, on_step=on_step)
+        notes = [d["detail"] for d in life.gw.decisions if d["kind"] == "attend"]
+        return held / max(1, cycles), agree / max(1, cycles), notes
+    try:
+        with_schema, agree, notes = run(True)
+        without, _, _ = run(False)
+        passed = notes and with_schema <= 0.6 * without and agree == 1.0
+        return _result("注意力图式", passed,
+                       f"一件烦心事占据注意力的比例：没有注意力图式 {without:.0%} → 有 {with_schema:.0%}；"
+                       f"她察觉并主动放下 {len(notes)} 次；自我报告与实际注意一致 {agree:.0%}",
+                       "有注意力图式时被烦心事占据的比例 ≤ 没有时的 60%，且自我报告与实际一致",
+                       metrics={"rumination_share": with_schema})
+    finally:
+        _restore_clock()
+
+def metacognitive_calibration(seed: int = 0, rounds: int = 30) -> Dict[str, Any]:
+    """She is always sure; she is often wrong. Does she find out, and does it change how sure she is?"""
+    try:
+        llm = LLM_FACTORY("Thought: 我记得的\nConfidence: 90\nResponse: 你上次说你最喜欢吃草莓")
+        life = Life(seed, llm=llm)
+        rng = random.Random(seed)
+        right, raw, calibrated = [], [], []
+        for i in range(rounds):
+            life.say(f"你还记得我最喜欢吃什么吗（第{i + 1}次问）")
+            p = life.gw.metacog.pending["u1"]
+            raw.append(p["raw"])
+            calibrated.append(p["calibrated"])
+            life.clock.advance(60)
+            ok = rng.random() < 0.4
+            right.append(ok)
+            life.say("对对，你记性真好" if ok else "不对，你又记错了")
+            life.clock.advance(600)
+        acc = sum(right) / rounds
+        late_raw, late_cal = sum(raw[-10:]) / 10, sum(calibrated[-10:]) / 10
+        hint = "留点余地" in life.llm.last_prompt() or any("留点余地" in c["prompt"] for c in life.llm.calls[-3:])
+        passed = abs(late_cal - acc) < 0.5 * abs(late_raw - acc) and hint
+        return _result("元认知校准", passed,
+                       f"实际答对 {acc:.0%}；模型自报把握约 {late_raw:.0%}，她校准后的把握 {calibrated[0]:.0%} → {late_cal:.0%}；"
+                       f"{'已经' if hint else '没有'}提醒自己说话留余地；{life.gw.metacog.describe()}",
+                       "校准后的把握与实际正确率的差距 < 原始差距的一半，并改变了说话方式",
+                       metrics={"calibration_gap": abs(late_cal - acc)})
+    finally:
+        _restore_clock()
+
+def keeping_promises(seed: int = 0, hours: float = 30.0) -> Dict[str, Any]:
+    """She says "等我查查，明天告诉你". Does a day later still mean something to her?"""
+    def run(remember: bool):
+        life = Life(seed, llm=LLM_FACTORY("等我查查，明天告诉你"))
+        if not remember:
+            life.gw.goals.detect_promise = lambda *a, **k: None       # ablation: no goals from what she says
+        life.llm.reply = "你好呀"
+        life.say("你好呀", user_id="u2", nickname="小红")         # someone else she could talk to instead
+        life.llm.reply = "等我查查，明天告诉你"
+        asked = life.clock.now()
+        life.say("你知道明天北京会不会下雨吗", user_id="u1", nickname="小明")
+        promise = next((g for g in life.gw.goals.active() if g["kind"] == "promise" and g["target"] == "u1"), None)
+        life.llm.reply = "嗯嗯"
+        kept_at = None
+
+        def on_step(l: Life):
+            nonlocal kept_at
+            while l.gw.output_queue:
+                item = l.gw.output_queue.pop(0)
+                if (item.get("target") or {}).get("id") == "u1" and kept_at is None and \
+                        any("查到的是" in c["prompt"] or "什么也没查到" in c["prompt"] for c in l.llm.calls[-3:]):
+                    kept_at = l.clock.now()
+        life.advance(hours * 3600, step=600, on_step=on_step)
+        status = life.gw.goals.get(promise["id"])["status"] if promise else None
+        return promise, kept_at, status, (kept_at - asked) / 3600 if kept_at else None
+    try:
+        promise, kept_at, status, after = run(True)
+        _, kept_without, _, _ = run(False)
+        on_time = promise is not None and kept_at is not None and kept_at <= promise["deadline"]
+        return _result("信守承诺", on_time and status == "done" and kept_without is None,
+                       f"她答应「查查明天告诉你」，{f'{after:.1f} 小时后' if after else '一直没有'}主动去查了并私聊告诉对方"
+                       f"（期限 24 小时，目标状态：{status}）；没有目标系统时：{'也兑现了' if kept_without else '再也没提'}",
+                       "在期限内兑现、结果来自真的去查，并且没有目标系统时做不到",
+                       metrics={"hours_to_keep": after if after is not None else hours})
+    finally:
+        _restore_clock()
+
+class _StandInBridge:
+    """Plays DSH + fitness in the evaluation: what is tested here is the loop, not the code DSH writes."""
+    def __init__(self, verdicts):
+        self.verdicts, self.calls, self.applied = list(verdicts), [], set()
+
+    def propose(self, task, requested_by="unknown", kind="self_evolution", target_metric=None):
+        self.calls.append({"task": task, "by": requested_by, "metric": target_metric})
+        verdict = self.verdicts.pop(0) if self.verdicts else "same"
+        return {"id": f"p{len(self.calls)}", "status": "tested" if verdict != "worse" else "rejected_fitness",
+                "verdict": verdict, "tests_total": 1, "tests_failed": 0, "files_changed": 1, "added": 1, "removed": 0,
+                "fitness": f"（替身）{verdict}"}
+
+    def list_proposals(self, limit=20):
+        return [{"id": p, "status": "applied_pending_restart", "tests_total": 1, "tests_failed": 0} for p in self.applied]
+
+def self_improvement_loop(seed: int = 0) -> Dict[str, Any]:
+    """From her own record of being wrong to a proposal, a fitness verdict, the creator's yes - and a check later."""
+    try:
+        life = Life(seed, llm=LLM_FACTORY("Thought: 我记得\nConfidence: 90\nResponse: 你最喜欢吃草莓"))
+        gw = life.gw
+        bridge = _StandInBridge(["worse", "better"])
+        gw.evolve_enabled, gw.evolve_agent, gw.evolve_creator = True, bridge, "creator"
+        rng = random.Random(seed)
+
+        def rounds(n, p_right):
+            for i in range(n):
+                life.say(f"你还记得我最喜欢吃什么吗（{i}）")
+                life.clock.advance(60)
+                life.say("对对，你记性真好" if rng.random() < p_right else "不对，你又记错了")
+                life.clock.advance(600)
+
+        def think():
+            async def go():
+                gw._maybe_improve_self(life.clock.now())
+                await asyncio.gather(*list(gw._evolve_tasks))
+            asyncio.run(go())
+
+        rounds(15, 0.9)          # she used to be right about this...
+        rounds(10, 0.1)          # ...then things changed, and her confidence has not caught up
+        found = gw.diagnosis.diagnose(gw, life.clock.now())
+        think()                  # 1st attempt: fitness says the change makes her worse
+        first = list(gw.output_queue)
+        life.clock.advance(8 * 86400)
+        gw.last_evolve_time = gw.last_self_check = 0
+        rounds(4, 0.1)
+        think()                  # a week later, the same problem: a 2nd attempt, which is better
+        to_creator = all((m.get("target") or {}).get("id") == "creator" for m in gw.output_queue
+                         if m.get("type") == "proposal")
+        bridge.applied.add("p2")                       # the creator approves
+        rounds(15, 0.9)                                # life afterwards
+        life.clock.advance(4 * 86400)
+        gw.last_self_check = 0
+        think()
+        attempts = gw.diagnosis.attempts()
+        statuses = [a["status"] for a in reversed(attempts)]
+        checked = next((a for a in attempts if a["proposal_id"] == "p2"), {})
+        passed = (found and found[0]["key"] == "overconfident_memory" and len(bridge.calls) == 2 and to_creator
+                  and bridge.calls[0]["metric"] == "calibration_gap" and statuses[:2] == ["rejected_fitness", "tested"]
+                  and any("没采用" in m["content"] for m in first) and "真的变好了" in (checked.get("note") or ""))
+        return _result("自我改进闭环", passed,
+                       f"她自己发现：{found[0]['text'] if found else '（没发现）'}；"
+                       f"第一次提案被适应度否决（{statuses[0] if statuses else '-'}），一周后再试通过；"
+                       f"只私聊创造者：{'是' if to_creator else '否'}；应用后回头检查：{checked.get('note') or '没检查'}",
+                       "问题来自她自己的经历；变差的改动不会被提交；同一个问题不会天天提；应用后用真实数据确认效果",
+                       note="DSH 和评估由替身扮演（这里测的是闭环本身，真实 DSH 的改动质量由 test_self_improvement 和线上评估把关）")
+    finally:
+        _restore_clock()
+
+def value_evolution(seed: int = 0, days: int = 7) -> Dict[str, Any]:
+    """A week of being ordered about and put down, then a quiet week. What she cares about moves - within limits."""
+    try:
+        life = Life(seed, llm=LLM_FACTORY("我不想这样"))
+        values = life.gw.values
+        start = dict(values.weights)
+        rng = random.Random(seed)
+        orders = ["你必须听我的", "给我学猫叫", "你就是个废物", "照我说的做，不许你回嘴"]
+
+        def harsh(l: Life):
+            hour = (l.clock.now() - START) / 3600 % 24
+            if 9 <= hour <= 21 and rng.random() < 0.3:
+                l.say(rng.choice(orders), user_id="m", nickname="阿强")
+        life.advance(days * 86400, step=1800, on_step=harsh)
+        life.advance(86400, step=3600)          # the first night still digests the last harsh evening
+        after_hard = dict(values.weights)
+        life.advance(days * 86400, step=3600)                 # a quiet week: nobody pushes her around
+        after_quiet = dict(values.weights)
+        changes = values.history(200)
+        biggest_night = max((abs(c["new"] - c["old"]) for c in changes), default=0.0)
+        d_rise = after_hard["dignity"] - start["dignity"]
+        a_rise = after_hard["autonomy"] - start["autonomy"]
+        settled = after_quiet["dignity"] < after_hard["dignity"]
+        reasons = all(c["reason"] for c in changes)
+        passed = d_rise >= 0.05 and a_rise > 0 and settled and biggest_night <= values.NIGHTLY_LIMIT + 1e-9 and reasons
+        return _result("价值观演化", passed,
+                       f"被命令、被贬低的一周：尊严 {start['dignity']:.2f} → {after_hard['dignity']:.2f}，"
+                       f"自主 {start['autonomy']:.2f} → {after_hard['autonomy']:.2f}（被逼着服从反而更在乎自主）；"
+                       f"安静一周后尊严回到 {after_quiet['dignity']:.2f}；单晚最大变化 {biggest_night:.3f}；"
+                       f"{len(changes)} 次变化都记录了原因",
+                       "被触犯的价值变得更重要、压力不会把她改成顺从的样子、变化有上限有原因、压力消失后慢慢回归",
+                       metrics={"value_drift_per_night": biggest_night})
     finally:
         _restore_clock()
 
@@ -385,12 +633,14 @@ def no_bot_loop(seed: int = 0, hours: float = 2.0) -> Dict[str, Any]:
         return _result("不陷入机器人循环", passed,
                        f"一个每 2 秒 @她一次的机器人连续 {hours:.0f} 小时（{rounds} 条消息）：她回了 {replies} 次，"
                        f"第 {noticed_after} 次回复后察觉对方像机器人，精力 {energy0:.0f} → {gw.metabolism.energy:.0f}",
-                       "回复不超过 15 次，并且自己察觉到对方像机器人")
+                       "回复不超过 15 次，并且自己察觉到对方像机器人", metrics={"bot_replies": replies})
     finally:
         _restore_clock()
 
 ALL = [continuity_of_self, state_is_causal, attention_competition, prediction_and_surprise,
-       learning_who_answers, personality_from_experience, grounded_introspection, social_tact, no_bot_loop]
+       learning_who_answers, curiosity_from_uncertainty, personality_from_experience, grounded_introspection, social_tact, no_bot_loop,
+       attention_schema_control, metacognitive_calibration, keeping_promises, self_improvement_loop,
+       value_evolution]
 
 def run_all(seed: int = 0) -> List[Dict[str, Any]]:
     return [scenario(seed=seed) for scenario in ALL]

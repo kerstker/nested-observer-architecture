@@ -12,6 +12,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.venv-*/
 
 # ---- local models / editor ----
 models/

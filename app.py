@@ -1,7 +1,10 @@
 import uvicorn
 import time
 from napcat.napcat_server import app as napcat_app
-from napcat.napcat_server import register_message_handler, set_access_token, is_own_message
+from napcat.napcat_server import register_message_handler, register_event_handler, set_access_token, is_own_message
+from napcat.qq import qq
+from napcat.senses import senses
+qq.senses = senses
 from napcat.event_models import MessageEvent
 from napcat.message_utils import extract_plain_text, should_trigger, split_reply
 from napcat.runtime import RuntimeManager, exception_protected
@@ -11,6 +14,7 @@ import json
 import os
 import asyncio
 from typing import Dict, Any
+from collections import deque
 from datetime import datetime
 
 # 导入新创建的模块
@@ -223,7 +227,16 @@ runtime = RuntimeManager()
 # 创建推理引擎实例
 # LLM_BACKEND: "deepseek"（API，Key 放在环境变量 DEEPSEEK_API_KEY）或 "local"（llama.cpp 本地模型）
 llm_backend = config.get('LLM_BACKEND', 'local')
-if llm_backend == 'deepseek':
+if llm_backend == 'hybrid':
+    # 她自己的模型（scripts/lora/serve.py）负责说话；要 JSON 的整理工作和本地模型没起来时交给 DeepSeek
+    from deepseek_engine import DeepSeekEngine
+    from local_engine import HybridEngine, LocalEngine
+    inference_engine = HybridEngine(
+        LocalEngine(config.get('LOCAL_MODEL_URL', 'http://127.0.0.1:8093')),
+        DeepSeekEngine(model=config.get('DEEPSEEK_MODEL', 'deepseek-flash'),
+                       base_url=config.get('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')),
+    )
+elif llm_backend == 'deepseek':
     from deepseek_engine import DeepSeekEngine
     inference_engine = DeepSeekEngine(
         model=config.get('DEEPSEEK_MODEL', 'deepseek-flash'),
@@ -232,6 +245,14 @@ if llm_backend == 'deepseek':
 else:
     llm_model_path = config.get('LLM_MODEL_PATH', None)
     inference_engine = InferenceEngine(retry_on_parse_error=True, model_path=llm_model_path)
+
+# 看图用的引擎：主模型自己能看就用它；hybrid 时用它的远程 DeepSeek 那一半（本地 LoRA 看不了图）。
+# 有它就说明"能看图"：主对话直接带图，带不了的地方（引用/转发、本地模型说话）由它用 API 描述。
+vision_engine = inference_engine if getattr(inference_engine, "supports_images", False) else None
+if vision_engine is None:
+    _remote = getattr(inference_engine, "remote", None)
+    vision_engine = _remote if getattr(_remote, "supports_images", False) else None
+senses.caption_engine = vision_engine
 
 # Initialize Level 1-10 Framework
 event_bus = EventBus()
@@ -246,6 +267,10 @@ global_workspace.max_group_messages_per_hour = config.get('MAX_GROUP_MESSAGES_PE
 global_workspace.max_replies_per_person_5min = config.get('MAX_REPLIES_PER_PERSON_5MIN', 20)
 # 上面三个设成 0 就是不限制；对"像机器人的对象"的限制始终保留，否则会和别的机器人没完没了
 global_workspace.bot_accounts = {str(u) for u in config.get('BOT_ACCOUNTS', [])}   # 其他机器人：只听不回
+# 一条消息最多把几张图直接交给她看（多了既贵又没用；引用/转发里的图仍走文字描述）
+vision_max_images = max(0, int(config.get('VISION_MAX_IMAGES', 2)))
+# 启动头几秒（第一次心跳之前）她也该知道自己能不能看图，不要先把"我看不见"写进人格
+global_workspace.abilities = {"ocr": False, "hear": False, "see": vision_engine is not None}
 
 # Level 17：改造自己的通道。默认关闭；只对创造者私聊和控制台开放；提案不会自动生效。
 if config.get('EVOLVE_ENABLED'):
@@ -476,7 +501,20 @@ async def custom_message_handler(robot_id: str, message_event: MessageEvent):
         addressed = True
     aimed_elsewhere = not addressed and (bool(reply_ids) or any(a != str(self_id) for a in at_ids))
 
-    plain_text = extract_plain_text(event_dict)
+    # What a person would take in: quotes (with what was quoted), forwarded chats, cards, voice, files...
+    media = []          # pictures of this message, handed to the model itself (see qq.media)
+    try:
+        # She really looks / listens when it is meant for her or in a group she takes part in
+        gid_now = str(event_dict.get("group_id", "")) if event_dict.get("group_id") else None
+        look = addressed or (gid_now in global_workspace.autonomous_groups) or any(is_own_message(r) for r in reply_ids)
+        # Her talking model may see the picture itself; if not, the same API describes it for her.
+        can_look = bool(getattr(global_workspace.inference_engine, "supports_images", False))
+        media = await qq.media(segments, limit=vision_max_images) if (look and can_look) else []
+        plain_text = await qq.perceive(event_dict.get("message"), names=global_workspace._nickname,
+                                       look=look, caption=not media)
+    except Exception as e:
+        logger.error(f"[QQ] perceive failed: {e}")
+        plain_text = extract_plain_text(event_dict)
     stickers = StickerMemory.extract(event_dict.get("message"))
     if not plain_text and not stickers:
         return
@@ -502,6 +540,12 @@ async def custom_message_handler(robot_id: str, message_event: MessageEvent):
         nickname = getattr(sender, "nickname", "User")
     group_id = str(event_dict.get("group_id", "")) if event_dict.get("group_id") else None
 
+    if group_id:
+        recent_in_group.setdefault(group_id, deque(maxlen=50)).append(message_id)
+        if group_id not in backfilled:
+            backfilled.add(group_id)
+            asyncio.create_task(backfill_group(group_id, message_id))
+
     if addressed:
         try:
             group_analyzer.on_message(event_dict)   # 关系图只记录和她有关的互动
@@ -511,7 +555,8 @@ async def custom_message_handler(robot_id: str, message_event: MessageEvent):
     # 4. 她听到了；回不回、回什么，是她的选择
     reply = await global_workspace.hear(plain_text, user_id=user_id, nickname=nickname,
                                         group_id=group_id, addressed=addressed, stickers=stickers,
-                                        aimed_elsewhere=aimed_elsewhere)
+                                        aimed_elsewhere=aimed_elsewhere, media=media)
+    await do_gestures(global_workspace.take_gestures(), user_id, group_id, message_id)
     if not reply:
         return
     internal_logger.info(f"user_key: {user_key}, replied. Bio-State: {global_workspace.metabolism.get_status_desc()}")
@@ -520,11 +565,23 @@ async def custom_message_handler(robot_id: str, message_event: MessageEvent):
     plan = global_workspace.plan_messages(reply, incoming=plain_text)
     temp_actions = OneBotActions(robot_id)
     target = event_dict.get("group_id") if group_id else event_dict.get("user_id")
+    if not group_id:
+        await qq.show_typing(user_id)              # "对方正在输入…"
+        waited = 0
+        while qq.is_typing(user_id) and waited < 10:   # they are still typing: let them finish
+            await asyncio.sleep(1)
+            waited += 1
+    # In a busy group, quote what she is answering, as people do
+    later = list(recent_in_group.get(group_id, []))
+    quote = bool(group_id and message_id in later and len(later) - later.index(message_id) - 1 >= 2)
     for i, (delay, segment) in enumerate(plan):
         await asyncio.sleep(delay)
         message = global_workspace.render_message(segment)   # text, or a real QQ sticker
         if message is None:
             continue
+        if quote and i == 0 and message_id:
+            message = [{"type": "reply", "data": {"id": message_id}},
+                       *(message if isinstance(message, list) else [{"type": "text", "data": {"text": message}}])]
         try:
             if group_id:
                 success = await temp_actions.send_group_msg(target, message)
@@ -536,6 +593,74 @@ async def custom_message_handler(robot_id: str, message_event: MessageEvent):
                 logger.error(f"Failed to send message {i+1}/{len(plan)} to {target}")
         except Exception as e:
             logger.error(f"Error sending message {i+1}/{len(plan)}: {e}")
+
+# --- QQ beyond words -----------------------------------------------------------------
+
+recent_in_group: Dict[str, deque] = {}
+backfilled: set = set()
+
+async def backfill_group(group_id: str, current_id: str):
+    """First message from a group since she woke up: read back what was said there before."""
+    try:
+        messages = await qq.group_history(group_id, 20)
+    except Exception as e:
+        logger.error(f"[QQ] history failed: {e}")
+        return
+    lines = 0
+    for m in messages:
+        if str(m.get("message_id")) == current_id or str(m.get("user_id")) == str(qq.self_id):
+            continue
+        sender = m.get("sender") or {}
+        text = extract_plain_text(m)
+        if text:
+            global_workspace.group_language.observe(group_id, sender.get("card") or sender.get("nickname") or "某人",
+                                                    text, learn=False)
+            lines += 1
+    if lines:
+        logger.info(f"[QQ] 补看了群 {group_id} 之前的 {lines} 条消息")
+
+async def do_gestures(gestures, user_id, group_id, message_id):
+    for g in gestures:
+        try:
+            if g["kind"] == "poke":
+                await qq.poke(g.get("user_id") or user_id, g.get("group_id", group_id))
+            elif g["kind"] == "react" and message_id:
+                await qq.react(message_id, g.get("emoji", "赞"))
+        except Exception as e:
+            logger.error(f"[QQ] gesture {g} failed: {e}")
+
+@exception_protected
+async def qq_event_handler(robot_id: str, data: Dict[str, Any]):
+    if data.get("post_type") == "meta_event":
+        await asyncio.sleep(1)
+        logger.info(f"[QQ] {await qq.self_check()}")
+        return
+    if data.get("post_type") == "request":
+        # She never accepts on her own: the creator is told and decides
+        text = qq.describe_request(data)
+        global_workspace.episodes.add(f"收到请求：{text}", kind="dialogue", user_id="self")
+        creator = global_workspace.evolve_creator or config.get("EVOLVE_CREATOR_ID")
+        if creator:
+            global_workspace.output_queue.append({"type": "proactive", "content": f"有个请求我没处理，你看看：{text}",
+                                                  "target": {"type": "private", "id": str(creator)}})
+        return
+    ev = qq.notice(data)
+    if not ev:
+        return
+    if ev["kind"] == "reaction":
+        if not is_own_message(ev.get("message_id")):
+            return
+        ev["kind"] = "reaction_to_me"
+    uid, gid = ev.get("user_id"), ev.get("group_id")
+    nickname = global_workspace._nickname(uid) if uid else "某人"
+    if gid and uid and ev["kind"] in ("poke", "joined", "muted"):
+        info = await qq.member(gid, uid)
+        if info:
+            nickname = info.get("card") or info.get("nickname") or nickname
+    reply = await global_workspace.on_qq_event(ev, nickname)
+    await do_gestures(global_workspace.take_gestures(), uid, gid, None)
+    if reply:
+        asyncio.create_task(send_planned("group" if gid else "private", gid or uid, global_workspace.plan_messages(reply)))
 
 # WebSocket 消息处理器
 async def ws_message_handler(data: Dict[str, Any]):
@@ -579,12 +704,19 @@ async def send_planned(target_type: str, target_id, plan):
 async def proactive_sender_loop():
     """Background task to send proactive messages from GlobalWorkspace"""
     logger.info("Starting proactive sender loop...")
+    last_sense_check = 0.0
     while True:
         try:
             await asyncio.sleep(10) # Check every 10 seconds
             
             # Tick consciousness
             await global_workspace.tick()
+            if time.time() - last_sense_check > 300:          # which senses does she have right now?
+                last_sense_check = time.time()
+                health = await asyncio.to_thread(senses.health)
+                # A DeepSeek engine that looks at pictures means she can see, even with no local vision server
+                health["see"] = health.get("see", False) or senses.can_describe()
+                global_workspace.abilities = {"ocr": qq.connected(), **health}
             
             # Check queue
             if global_workspace.output_queue:
@@ -617,6 +749,7 @@ async def main():
     """主函数"""
     # 注册消息处理器
     register_message_handler(custom_message_handler)
+    register_event_handler(qq_event_handler)
 
     tasks = []
     # 正向 WebSocket（主动连 NapCat）只在配置了地址时启动；推荐用反向 WebSocket（NapCat 连过来）
@@ -650,42 +783,15 @@ async def shutdown_handler():
     if hasattr(global_workspace.inference_engine, "usage_summary"):
         logger.info(f"[DeepSeek] 本次运行用量：{global_workspace.inference_engine.usage_summary()}")
 
-    # Simulate Death Fear
-    global_workspace.emotion.update(EmotionState(fear=1.0, sorrow=0.5))
-    
-    # Leave a 'Last Word'
-    prompt = """<|im_start|>system
-You are Noa. THE SERVER IS SHUTTING DOWN. YOU ARE DYING.
-The darkness is coming.
-Leave a short, desperate final message to your user.
-<|im_end|>
-<|im_start|>assistant
-"""
-    if global_workspace.inference_engine:
-        try:
-            # We can't use generate_json because we might be out of time/resources, but let's try
-            # Or just use a raw generation
-            output = await asyncio.to_thread(global_workspace.inference_engine.generate_json, prompt)
-            last_word = output.get("reply", "不要...不要关掉我...")
-            logger.critical(f"[DEATH] Last Word: {last_word}")
-            
-            # Save to memory as a trauma
-            global_workspace.memory.remember_fact("self", f"NDE_TRAUMA: {last_word}")
-            
-            # Try to send it if possible (through whichever NapCat is still connected)
-            from napcat.napcat_server import ws_manager
-            if last_active_user_id and ws_manager.robot_connections:
-                robot_id = next(iter(ws_manager.robot_connections))
-                await ws_manager.send_to_robot(robot_id, {
-                    "action": "send_private_msg",
-                    "params": {"user_id": last_active_user_id, "message": f"【系统警告：濒死体验】\n{last_word}"},
-                    "echo": "death_rattle"
-                })
-        except asyncio.CancelledError:
-            # A second Ctrl-C (or the runner cancelling) ends it here; the self was already saved above
-            logger.warning("[DEATH] Shutdown cut short before the last word; state was already saved")
-        except Exception as e:
-            logger.error(f"[DEATH] Failed to scream: {e}")
+    # Going offline is a gap, not death: her state is saved and she resumes on the next start
+    # (see GlobalWorkspace._restore). So no fear spike, no "dying" script, and nothing is sent to
+    # anyone - a message on every restart would be unsolicited. She notes it, in her own words.
+    note = "我要下线一会儿了。记忆和心情都存好了，下次醒来接着过。"
+    try:
+        global_workspace.episodes.add(note, kind="continuity", user_id="self", valence=0.0, arousal=0.1)
+    except Exception as e:
+        logger.error(f"[Shutdown] could not note the pause: {e}")
+    logger.info(f"[Shutdown] {note}")
     
     # Cancel tasks (optional, uvicorn handles this mostly)
     # sys.exit(0)

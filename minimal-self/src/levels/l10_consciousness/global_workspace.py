@@ -26,8 +26,13 @@ from ...levels.l6_homeostasis.homeostasis import Homeostasis
 from ...levels.l7_tom.tom import TheoryOfMind
 from ...levels.l7_tom.user_model import UserModelStore, SENTIMENT
 from ...levels.l8_agency.drives import DriveSystem, Option
+from ...levels.l8_agency.goals import GoalSystem
+from .attention_schema import AttentionSchema
+from .metacognition import Metacognition
 from ...levels.l9_narrative.narrative import NarrativeSelf
+from ...levels.l9_narrative.style_anchors import StyleAnchors
 from ...levels.l17_self_improvement.code_interpreter import CodeInterpreter
+from ...levels.l17_self_improvement.diagnosis import SelfDiagnosis
 from ...levels.l18_knowledge.knowledge_base import KnowledgeBase
 from ...levels.l19_search.web_search import WebSearchTool
 
@@ -68,7 +73,7 @@ class GlobalWorkspace:
         self.homeostasis = Homeostasis()
         self.emotion = EmotionEngine()
         self.tom = TheoryOfMind()
-        self.values = ValueSystem()
+        self.values = ValueSystem(db_path)
 
         # Level 17: Self-Improvement
         self.interpreter = CodeInterpreter()
@@ -85,6 +90,8 @@ class GlobalWorkspace:
         self.semantic = SemanticMemory(db_path, embedder)
         self.autobiography = Autobiography(db_path)
         self.narrative = NarrativeSelf(db_path, self.episodes, self.semantic, self.autobiography, self.memory.db)
+        # Her own voice as a few style anchors (no training, no GPU): what she sounded like at her best
+        self.style_anchors = StyleAnchors(db_path)
 
         # Her sticker collection (kept next to the database, in data/stickers)
         sticker_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), "data", "stickers")
@@ -100,9 +107,21 @@ class GlobalWorkspace:
         # Predictive models of people, learned drives
         self.user_models = UserModelStore(db_path)
         self.drives = DriveSystem(db_path, rng=self.rng)
+        self.goals = GoalSystem(db_path)
+        # Self-improvement closed loop: she diagnoses herself, DSH proposes, fitness decides, she checks later
+        self.diagnosis = SelfDiagnosis(db_path)
+        self.self_check_interval = 6 * 3600
+        self.last_self_check = 0.0
+        self.self_improving: Optional[Dict[str, Any]] = None
+        # Which senses are actually running (set by the app from the sense servers' health)
+        self.abilities: Dict[str, bool] = {}
 
         # Global workspace: competition + broadcast
         self.workspace = Workspace(capacity=2, rng=self.rng)
+        # Her model of her own attention (and the control it makes possible), and of her own reliability
+        self.attention_schema = AttentionSchema()
+        self.metacog = Metacognition()
+        self.last_verbal_confidence: Optional[float] = None
         self.pending_candidates: List[Candidate] = []
         self._recent_associations = deque(maxlen=20)
         self.bus.subscribe(EventType.WORKSPACE_BROADCAST, self._on_broadcast)
@@ -114,6 +133,10 @@ class GlobalWorkspace:
         self.interjection_window = 300        # seconds to see whether anyone took up what she said
         self.group_spoke_at: Dict[str, deque] = {}
         self.group_mute_until: Dict[str, float] = {}
+        # QQ beyond words: gestures she makes (poke, emoji reaction) for the app to carry out, and QQ's own mute
+        self.gestures: List[Dict[str, Any]] = []
+        self.qq_muted_until: Dict[str, float] = {}
+        self.poke_backs: Dict[str, List[float]] = {}
         self.pending_interjections: Dict[str, float] = {}
         self.unread: Dict[tuple, List[tuple]] = {}   # (user_id, group_id) -> [(t, nickname, text)] while asleep
         self.decisions = deque(maxlen=50)     # what she heard and what she chose, for the console
@@ -157,6 +180,8 @@ class GlobalWorkspace:
         self.evolve_min_interval = 24 * 3600
         self.last_evolve_time = 0.0
         self.last_evolve_result: Optional[Dict[str, Any]] = None
+        self.evolve_in_progress = False
+        self._evolve_tasks: set = set()
 
         # Level 14: Stream of Consciousness (inner speech, not stored as knowledge)
         self.consciousness_stream = deque(maxlen=20)
@@ -176,7 +201,43 @@ class GlobalWorkspace:
         self.last_tick_time = clock.now()
         self.awakening = 0
         self.continuity: Optional[Dict[str, Any]] = None
+        self.style_edge = 0.0   # running measure of how sharp her recent replies were (personality homeostasis)
         self._restore()
+        self._update_temperament()
+
+    # ------------------------------------------------------------------
+    # Personality homeostasis: a stable self underneath the moment
+    # ------------------------------------------------------------------
+
+    EDGE_MARKERS = ("你倒是", "凭什么", "你到底", "什么意思", "别又", "搞什么", "有病", "关你什么事", "你懂什么",
+                    "无语", "呵呵", "滚", "少来", "你行你上", "管得着", "跟你有什么关系")
+
+    def _traits(self) -> Dict[str, float]:
+        return {k: v["value"] for k, v in self.memory.db.get_persona_traits().items()}
+
+    def _update_temperament(self):
+        """Her resting mood follows from who she is: warmth and liveliness lift it, and it moves as she changes."""
+        t = self._traits()
+        self.emotion.baseline = {"joy": 0.05 + 0.15 * t.get("affection", 0.5) + 0.1 * t.get("energy", 0.5)}
+
+    def _expected_edge(self) -> float:
+        """How sharp she usually is; sharper is in character only when she is actually upset."""
+        t = self._traits()
+        edge = 0.1 + 0.2 * t.get("tsundere", 0.5) - 0.15 * t.get("affection", 0.5)
+        if self.emotion.valence() < -0.3:
+            edge += 0.4
+        return max(0.0, edge)
+
+    def _note_own_tone(self, reply: str, nickname: str):
+        """After speaking: was that like me? Large drift from her usual self becomes something she notices."""
+        markers = sum(reply.count(m) for m in self.EDGE_MARKERS)
+        edge = min(1.0, 0.4 * markers + 0.1 * max(0, reply.count("？") + reply.count("?") - 1))
+        self.style_edge += 0.3 * (edge - self.style_edge)
+        if self.style_edge > self._expected_edge() + 0.25:
+            self.pending_candidates.append(Candidate(
+                "self_model", "out_of_character", "我最近几句说话有点冲，跟平时的我不太一样", 0.5,
+                {"until": clock.now() + 1800}))
+            self._decide("self_check", None, nickname, "察觉自己最近说话有点冲，不像平时的自己")
 
     # ------------------------------------------------------------------
     # Persistent self (Phase 1)
@@ -194,8 +255,12 @@ class GlobalWorkspace:
             "autonomy": self.values.autonomy,
             "existential_anxiety": self.existential_anxiety,
             "anxiety_model": 2,
+            "bot_model": 2,
+            "style_edge": self.style_edge,
             "attention": self.workspace.attention,
             "self_model": self.self_model.to_dict(),
+            "attention_schema": self.attention_schema.to_dict(),
+            "metacognition": self.metacog.to_dict(),
             "awakening": self.awakening,
             "last_action_time": self.last_action_time,
         }
@@ -234,6 +299,9 @@ class GlobalWorkspace:
         self.values.autonomy = snap.get("autonomy", self.values.autonomy)
         self.existential_anxiety = snap.get("existential_anxiety", 0.0) * 0.5 ** (gap / self.anxiety_half_life)
         self.self_model.load_dict(snap.get("self_model", {}))
+        self.attention_schema.load_dict(snap.get("attention_schema", {}))
+        self.metacog.load_dict(snap.get("metacognition", {}))
+        self.style_edge = snap.get("style_edge", 0.0)
         self.last_action_time = snap.get("last_action_time", 0.0)
         self.awakening = snap.get("awakening", 0) + 1
         # Being offline is unconsciousness: the body rests, and she wakes up on start-up
@@ -259,6 +327,15 @@ class GlobalWorkspace:
             if last:
                 # ...and finding that what came before is still there is a relief
                 self._shift_anxiety(-0.1, "醒来发现之前的记忆都还在")
+
+        # One-time correction: an earlier bot test (fast + 12 characters) mistook quick human typists
+        # for bots. Clear those flags; the stricter test will re-flag real bots quickly.
+        if snap.get("bot_model", 1) < 2:
+            for uid, m in self.user_models.models.items():
+                if m.get("seems_bot"):
+                    m["seems_bot"] = False
+                    self.user_models.save(uid)
+                    logger.info(f"[State] Cleared bot flag for {uid} (old detection rule)")
 
         # One-time correction: anxiety used to be raised +0.3 by random readings of her source code,
         # a mechanism that no longer exists. Keep what real events caused, not that.
@@ -368,12 +445,22 @@ class GlobalWorkspace:
                 await asyncio.to_thread(self._idle_thinking_process, winners)
                 self.last_thought_time = now
 
-            # Level 8: Closed-loop drives choose (or decline) a self-initiated action
+            # Level 8b: goals that have run their course are let go of
+            for g in self.goals.review(now):
+                self._on_goal_ended(g)
+
+            # Level 17: now and then she looks at how she has been doing, and works on herself
+            self._maybe_improve_self(now)
+
+            # Level 8: Closed-loop drives choose (or decline) a self-initiated action; goals weigh in
             if now - self.last_action_time >= self.min_action_interval:
                 option = self.drives.choose(self.homeostasis.tick(), self.metabolism.energy,
-                                            self.user_models.private_users())
+                                            self.user_models.private_users(),
+                                            goal_value=lambda action, target: self.goals.value_for(action, target, now))
                 if option.action != "wait":
                     self.last_action_time = now
+                    self._decide("intend", None, option.target,
+                                 f"{option.action}：{self.drives.describe(option)}")
                     await self._execute_option(option)
 
         if now - self.last_snapshot_time >= self.snapshot_interval:
@@ -424,6 +511,11 @@ class GlobalWorkspace:
             cands.append(Candidate("needs", "social", "好想有人陪我说说话" if h.social_need > 0.7 else "有点想找人聊天", h.social_need))
         if h.curiosity_need > 0.4:
             cands.append(Candidate("needs", "curiosity", "好无聊，想知道点新鲜事", 0.8 * h.curiosity_need))
+        goal = self.goals.most_pressing(now=now)
+        if goal:
+            pull = self.goals.pull(goal, now)
+            cands.append(Candidate("self_model", "goal", f"我还记着一件事：{goal['text'][:50]}", 0.15 + 0.4 * pull,
+                                   {"user_id": goal["target"], "goal_id": goal["id"]}))
         if self.metabolism.energy < 40:
             cands.append(Candidate("needs", "fatigue", "好困，没什么力气", 0.2 + 0.8 * (40 - self.metabolism.energy) / 40))
         return cands
@@ -432,7 +524,17 @@ class GlobalWorkspace:
         # Seeing someone brings back what is on her mind about them
         def about_interlocutor(c: Candidate) -> float:
             return 0.3 if talking_to and c.kind != "user_message" and c.payload.get("user_id") == talking_to else 0.0
-        winners = self.workspace.compete(candidates, bonus=about_interlocutor)
+        now = clock.now()
+        # ...and what she has decided not to dwell on is held back (top-down, from her attention schema) -
+        # unless the person it is about is right here: then it is no longer brooding, it is something to say
+        winners = self.workspace.compete(
+            candidates, bonus=lambda c: about_interlocutor(c) or self.attention_schema.bias(c, now))
+        for event in self.attention_schema.observe(winners, now):
+            if event["type"] == "disengage":
+                text = (f"我发现自己这一个小时大半时间都在想「{event['content'][:40]}」，"
+                        f"想也没用，{'先' if event['times'] == 1 else '又一次'}不去想它了")
+                self.episodes.add(text, kind="thought", user_id="self", valence=self.emotion.valence())
+                self._decide("attend", None, None, text)
         # A winner leaves the backlog once it has been conscious - except things that are
         # "about someone" (sticky_for), which stay on her mind until she talks to that person.
         won = {id(w) for w in winners
@@ -486,6 +588,8 @@ class GlobalWorkspace:
                                                   "until": clock.now() + 24 * 3600}))
         if err["kind"] == "proactive" and err.get("need") in NEED_ACTIONS:
             self.drives.reward(err["need"], NEED_ACTIONS[err["need"]], user_id, 0.0, self._learning_gain())
+            if err["need"] == "social":
+                self.values.record(clock.now(), "connection", "enact", 0.6, -0.4, f"我主动找 {name}，ta 没回", user_id)
 
     def _on_answer(self, err: Dict[str, Any], name: str, sensation: Optional[dict]) -> float:
         """Someone answered something Noa said. Returns the surprise of it."""
@@ -517,6 +621,9 @@ class GlobalWorkspace:
                 reward = 1.0
                 self.homeostasis.alleviate("social", 0.3)
             self.drives.reward(need, NEED_ACTIONS[need], err["user_id"], reward, self._learning_gain())
+            if need == "social":
+                self.values.record(clock.now(), "connection", "enact", 0.6, 0.5, f"我主动找 {name}，ta 回我了",
+                                   err["user_id"])
         return s
 
     def _learning_gain(self) -> float:
@@ -656,6 +763,17 @@ class GlobalWorkspace:
             goal = f"你有点孤单，想找 {name} 说说话"
         about = self.user_models.describe(target) if target else ""
         on_mind = "；".join(w.content for w in self.workspace.recent(2)) or "没什么特别的"
+        aim = self.goals.most_pressing("chat", target, clock.now()) if target else None
+        if aim:
+            goal += f"。你心里还记着：{aim['text']}"
+            if aim["kind"] == "promise":
+                goal += "。这次就是去兑现它"
+                if aim["topic"]:
+                    found = self._look_up(aim["topic"])
+                    goal += (f"。你去查了，查到的是：{found}" if found else
+                             "。你去查了，但什么也没查到，如实跟 ta 说")
+            elif self.goals.next_step(aim):
+                goal += f"（你想做的下一步：{self.goals.next_step(aim)}）"
         prompt = f"""<|im_start|>system
 {self._build_persona_prompt()}
 
@@ -675,6 +793,12 @@ class GlobalWorkspace:
                 self.episodes.add(f"我主动找 {name}：{message}", kind="proactive", user_id=target,
                                   valence=self.emotion.valence(), arousal=self.emotion.arousal())
             self.output_queue.append(item)
+            if aim:
+                self.goals.attempt(aim["id"])
+                if aim["kind"] == "promise":
+                    self._on_goal_ended(self.goals.complete(aim["id"], clock.now(), f"主动找 {name} 说了"))
+                else:
+                    self.goals.step_done(aim["id"], clock.now())
             return message
         except Exception as e:
             logger.error(f"[Agency] Error: {e}")
@@ -691,12 +815,14 @@ class GlobalWorkspace:
         if self.metabolism.is_sleeping:
             return
 
-        # 1. Generate a topic to research
+        # 1. Generate a topic to research - something she has set out to understand comes first
         on_mind = "；".join(w.content for w in self.workspace.recent(3)) or "没什么特别的"
+        aim = self.goals.most_pressing("search", None, clock.now())
+        wish = f"你之前就想弄明白：{aim['topic'] or aim['text']}" if aim else "你自己现在真正好奇的是什么？"
         topic_prompt = f"""<|im_start|>system
 你是乃爱。你现在有点无聊，想知道点什么。
 你最近心里在想：{on_mind}
-你自己现在真正好奇的是什么？只输出一个搜索关键词，不要别的。
+{wish}只输出一个搜索关键词，不要别的。
 <|im_end|>
 <|im_start|>assistant
 """
@@ -716,21 +842,31 @@ class GlobalWorkspace:
                 self.episodes.add(f"我好奇地想查「{query}」，可是什么也没查到", kind="search_failed",
                                   user_id="self", valence=-0.1, arousal=0.1)
                 self.drives.reward("curiosity", "search", None, 0.0, self._learning_gain())
+                if aim:
+                    self.goals.attempt(aim["id"])
                 return
 
             # 3. Learn: novelty is the reward
             novelty = self.episodes.novelty(f"{query} {search_result}")
+            self.values.record(clock.now(), "curiosity", "enact", 0.5, novelty - 0.3, f"我查了「{query}」")
             self.knowledge.memorize(f"Curiosity: {query}", search_result, ["curiosity", "auto-learning"], source="web_search")
             self.episodes.add(f"我好奇地查了「{query}」：{search_result[:120]}", kind="search", user_id="self",
                               arousal=0.3 + 0.4 * novelty, surprise=novelty)
             self.homeostasis.alleviate("curiosity", 0.1 + 0.5 * novelty)
             self.drives.reward("curiosity", "search", None, novelty, self._learning_gain())
+            asker = None
+            if aim:
+                self.goals.attempt(aim["id"])
+                self._on_goal_ended(self.goals.complete(aim["id"], clock.now(), f"查到了「{query}」"))
+                asker = aim["target"]
 
             # 4. Share with user
+            reason = (f"你一直想弄明白的「{aim['topic'] or aim['text']}」，刚才查了「{query}」"
+                      + (f"（{self._nickname(asker)} 之前问过你）" if asker else "")) if aim else f"你刚才因为好奇查了「{query}」"
             share_prompt = f"""<|im_start|>system
 {self._build_persona_prompt()}
 
-你刚才因为好奇查了「{query}」，查到了：
+{reason}，查到了：
 {search_result}
 如果你觉得有意思、想跟人说，就像平时发消息那样随口说一句；只输出要发的话，不要动作描写。
 如果你觉得没什么好说的，只输出：不说
@@ -745,7 +881,9 @@ class GlobalWorkspace:
             # Share it privately with the person she most likes talking to (never a group)
             people = self.user_models.private_users()
             item = {"type": "proactive", "content": message}
-            if people:
+            if asker in people:
+                item["target"] = {"type": "private", "id": asker}      # the person who asked hears it first
+            elif people:
                 target = max(people, key=lambda u: self.drives.q("social", "chat", u))
                 item["target"] = {"type": "private", "id": target}
             self.output_queue.append(item)
@@ -761,7 +899,9 @@ class GlobalWorkspace:
         logger.info("[Consciousness] Entering Dream State...")
         try:
             report = self.narrative.consolidate(self._llm if self.inference_engine else None,
-                                                phrase_candidates=self.group_language.candidates(k=20))
+                                                phrase_candidates=self.group_language.candidates(k=20),
+                                                goals_text=self.goals.review_text(),
+                                                values_text=self.values.dilemmas())
         except Exception as e:
             logger.error(f"[Dream] Nightmare (Error): {e}")
             return
@@ -769,11 +909,82 @@ class GlobalWorkspace:
             return
         if self.existential_anxiety > 0.05:
             self._shift_anxiety(-0.2, "睡了一觉，把这段时间的事在梦里理顺了")
+        self._update_temperament()   # personality may have shifted; her resting mood follows
+        self.style_edge *= 0.5       # a night's sleep takes the edge off
         if report.get("diary"):
             self.memory.remember_fact("self", f"Diary: {report['diary']}")
         for meme in report.get("memes", []):
             self.memory.add_meme(meme, "dream")
+        self._review_goals_in_sleep(report)
+        self._evolve_values(report.get("value_reflection"))
         return report
+
+    def _evolve_values(self, reflection: Optional[Dict[str, Any]] = None):
+        """What she cares about drifts with what she has lived through - slowly, and with reasons."""
+        for c in self.values.evolve(clock.now(), reflection):
+            word = self.values.VALUES[c["name"]][0]
+            text = f"我{'更' if c['new'] > c['old'] else '没那么'}在乎「{word}」了（{c['old']:.2f} → {c['new']:.2f}）：{c['reason']}"
+            self.causes.log({f"value_{c['name']}": c["new"] - c["old"]}, text)
+            self.episodes.add(text, kind="thought", user_id="self", valence=self.emotion.valence(), arousal=0.2)
+            self._decide("value", None, None, text)
+
+    def _review_goals_in_sleep(self, report: Dict[str, Any]):
+        now = clock.now()
+        own = {g["id"]: g for g in self.goals.active()}
+        for r in report.get("goal_review", []):
+            g = own.get(r["id"])
+            if g and g["kind"] == "self":
+                try:
+                    progress = float(r.get("progress", 0))
+                except (TypeError, ValueError):
+                    continue
+                self._on_goal_ended(self.goals.advance(g["id"], progress, now, str(r.get("note", ""))[:80]))
+        # Getting to know someone shows in what she now knows about them
+        for g in own.values():
+            if g["kind"] == "relationship":
+                known = len(self.semantic.for_user(g["target"], limit=20))
+                self._on_goal_ended(self.goals.advance(g["id"], (known - g["baseline"]) / 3, now,
+                                                       f"现在知道 ta 的 {known} 件事"))
+        new = report.get("new_goal")
+        if new:
+            steps = [str(x)[:40] for x in new.get("steps") or []][:4]
+            gid = self.goals.add("self", str(new["text"])[:80], now, why=str(new.get("why", ""))[:80], steps=steps,
+                                 importance=0.6)
+            if gid:
+                self._decide("goal", None, None, f"给自己定了一个目标：{new['text']}（因为{new.get('why', '')}）")
+                self.episodes.add(f"我决定了一件想做的事：{new['text']}", kind="thought", user_id="self",
+                                  valence=self.emotion.valence(), arousal=0.3)
+
+    def _look_up(self, topic: str) -> Optional[str]:
+        """Search for something on someone else's behalf (a promise): returns what was found, or None."""
+        try:
+            out = self._llm(f"""<|im_start|>system
+有人问过：「{topic}」。为了回答它，输出一个最合适的搜索关键词，只输出关键词。
+<|im_end|>
+<|im_start|>assistant
+""", max_tokens=30)
+            query = (out.get("reply") or "").strip().strip('"「」')
+            return self.search_tool.try_search(query, limit=2) if query else None
+        except Exception as e:
+            logger.error(f"[Goals] Look-up failed: {e}")
+            return None
+
+    def _on_goal_ended(self, g: Optional[Dict[str, Any]]):
+        """Reaching a goal is a joy; a broken promise is felt; letting go of the rest is a small sadness."""
+        if not g:
+            return
+        if g["status"] == "done":
+            self._feel(EmotionState(joy=0.15 + 0.15 * g["importance"]), f"做到了：{g['text'][:40]}")
+            self.episodes.add(f"我做到了一件想做的事：{g['text']}（{g['note']}）", kind="thought", user_id=g["target"] or "self",
+                              valence=0.4, arousal=0.3)
+            self._decide("goal", None, g["target"], f"完成：{g['text']}（{g['note']}）")
+        elif g["status"] == "abandoned":
+            broken = g["kind"] == "promise"
+            self._feel(EmotionState(sorrow=0.15 if broken else 0.05),
+                       f"{'没做到答应的事' if broken else '放下了一个目标'}：{g['text'][:40]}")
+            self.episodes.add(f"{'我没做到答应过的事' if broken else '我放下了'}：{g['text']}（{g['note']}）", kind="thought",
+                              user_id=g["target"] or "self", valence=-0.3 if broken else -0.1, arousal=0.2)
+            self._decide("goal", None, g["target"], f"放下：{g['text']}（{g['note']}）")
 
     def _introspection_tool(self) -> str:
         """
@@ -825,6 +1036,51 @@ class GlobalWorkspace:
             return True
         return "为什么" in text and any(k in text for k in ("刚才", "那样", "这么", "生气", "难过", "开心", "害怕", "不高兴", "心情"))
 
+    def _goals_from_conversation(self, user_input: str, reply: str, user_id: str, nickname: str,
+                                 group_id: Optional[str], domain: str, confidence: float, tool_context: str):
+        """Where her goals come from in conversation: what she promised, what she could not answer, who she likes."""
+        now = clock.now()
+        gid = self.goals.detect_promise(reply, user_id, nickname, user_input, now)
+        if gid:
+            self._decide("goal", group_id, nickname, f"记下了：{self.goals.get(gid)['text']}")
+            return
+        if domain == "knowledge" and (confidence < 0.45 or "搜索失败" in tool_context):
+            gid = self.goals.add("learn", f"弄明白「{user_input[:30]}」（{nickname} 问过我，我没答上来）", now,
+                                 target=user_id, topic=user_input[:60], why="被问住了", importance=0.5,
+                                 steps=["去查清楚", "告诉 ta"])
+            if gid:
+                self._decide("goal", group_id, nickname, f"想弄明白：{user_input[:30]}")
+            return
+        m = self.user_models.get(user_id)
+        if m.get("messages", 0) >= 15 and m.get("sentiment", 0) > 0.1:
+            known = len(self.semantic.for_user(user_id, limit=20))
+            if known < 2:
+                gid = self.goals.add("relationship", f"多了解一下 {nickname}", now, target=user_id,
+                                     why=f"我们聊了很多次，我却还不太了解 ta", importance=0.4, baseline=known,
+                                     steps=["问问 ta 平时喜欢做什么", "记住 ta 跟我说的事"])
+                if gid:
+                    self._decide("goal", group_id, nickname, f"想多了解一下 {nickname}")
+
+    ATTENTION_QUESTIONS = ("在想什么", "在想啥", "想什么呢", "你在听吗", "有在听", "有没有在听", "走神", "分心", "心不在焉")
+
+    @classmethod
+    def _is_attention_question(cls, text: str) -> bool:
+        return any(k in text for k in cls.ATTENTION_QUESTIONS)
+
+    def _on_metacognitive_outcome(self, o: Dict[str, Any], user_id: str, nickname: str):
+        """Error monitoring: a confident mistake stings and stays on her mind; an unsure success is a small relief."""
+        said = o["said"].replace("\n", " ")[:40]
+        if o["error"]:
+            text = f"我刚才说「{said}」，{nickname} 说我说错了" + ("——我当时还挺有把握的" if o["confidence"] > 0.7 else "")
+            self._feel(EmotionState(surprise=0.3 * o["surprise"], sorrow=0.1 * o["surprise"]), text)
+            self.episodes.add(text, kind="thought", user_id=user_id, valence=-0.2 * o["surprise"], surprise=o["surprise"])
+            self.pending_candidates.append(Candidate("self_model", "error", text, 0.3 + 0.5 * o["surprise"],
+                                                     {"user_id": user_id, "until": clock.now() + 1800}))
+        elif o["surprise"] > 0.4:
+            self._feel(EmotionState(joy=0.1), f"我本来没什么把握，{nickname} 说我是对的")
+        self._decide("metacog", None, nickname,
+                     f"{'说错了' if o['error'] else '说对了'}（当时的把握 {o['confidence']:.0%}）；{self.metacog.describe()}")
+
     # ------------------------------------------------------------------
     # Hearing and choosing (whether to speak at all)
     # ------------------------------------------------------------------
@@ -839,12 +1095,14 @@ class GlobalWorkspace:
 
     async def hear(self, text: str, user_id: str, nickname: str = "User", group_id: str = None,
                    addressed: bool = True, stickers: List[Dict[str, Any]] = None,
-                   aimed_elsewhere: bool = False) -> Optional[str]:
+                   aimed_elsewhere: bool = False, media: List[Dict[str, Any]] = None) -> Optional[str]:
         """
         Every message she can perceive comes through here. She hears it; whether she
         says anything - and what - is her own choice, made from her state and experience.
         `stickers` are the sticker segments in the message (see StickerMemory.extract).
         `aimed_elsewhere`: the message @-mentions or quotes someone else.
+        `media`: the pictures of this message ({"data": bytes, "mime": ...}, see qq.media), handed
+        to the model together with what was said, so she looks at the picture itself.
         Returns what she says, or None when she stays silent (or does not see it).
         """
         now = clock.now()
@@ -895,10 +1153,14 @@ class GlobalWorkspace:
                 self._feel(EmotionState(sorrow=0.15), f"{nickname} 嫌我吵，让我安静")
                 self._decide("muted", group_id, nickname, "被要求安静，三小时内不主动插话", text)
                 return None
+            if now < self.qq_muted_until.get(group_id, 0):
+                self._decide("asleep", group_id, nickname, "我在这个群被禁言了，说不了话", text)
+                return None
 
         if user_id in self.bot_accounts:
             return None   # listed as another bot: she hears it, never answers
 
+        woken = False
         if self.metabolism.is_sleeping:
             if not addressed:
                 return None
@@ -913,6 +1175,7 @@ class GlobalWorkspace:
                 return None
             self._feel(EmotionState(anger=0.15), f"被 {nickname} 吵醒了")
             self._decide("woken", group_id, nickname, "被吵醒了", text)
+            woken = True
 
         # She said goodbye to this conversation: she is not looking at it
         if addressed and now < self.left_until.get(key, 0):
@@ -930,9 +1193,27 @@ class GlobalWorkspace:
         if not addressed and not self._consider_interjecting(group_id, text, nickname, now):
             return None
 
-        reply = await self.process_input(text, user_id=user_id, nickname=nickname, group_id=group_id, addressed=addressed)
+        # Talked to - but people do not answer everything either
+        # (someone who kept calling until she woke up gets an answer, even a grumpy one)
+        if addressed and not woken:
+            p, why = self._reply_desire(text, user_id, group_id, explicit=not continuing, now=now)
+            if self.rng.random() >= p:
+                warm = self.drives.q("social", "chat", user_id) > 0.5 or self.emotion.valence() > 0.2
+                if self._is_low_content(text) and warm and self.rng.random() < 0.4:
+                    emoji = "笑" if any(c in text for c in "哈笑草w") else "赞"
+                    self.gestures.append({"kind": "react", "emoji": emoji, "user_id": user_id, "group_id": group_id})
+                    self._decide("react", group_id, nickname, f"没打字，给那条消息点了个「{emoji}」", text)
+                    return None
+                self._decide("silent", group_id, nickname, f"看到了，没回（{why}，想回的程度 {p:.0%}）", text)
+                return None
+
+        reply = await self.process_input(text, user_id=user_id, nickname=nickname, group_id=group_id,
+                                         addressed=addressed, media=media)
         if not reply:
             self._decide("silent", group_id, nickname, "看到了，但选择不回" if addressed else "想了想，没开口", text)
+            if addressed:
+                self.values.record(now, "autonomy", "enact", 0.3, self.emotion.valence(), f"{nickname} 找我，我选择不回",
+                                   user_id)
             return None
 
         if group_id:
@@ -952,6 +1233,7 @@ class GlobalWorkspace:
         self.reply_done_at[key] = now + sum(d for d, _ in self.plan_messages(reply, text))
         self._decide("spoke", group_id, nickname,
                      "接着聊" if continuing else "回了" if addressed else "自己插了一句", text)
+        self._note_own_tone(reply, nickname)
         self._maybe_leave(key, reply, nickname, group_id, now)
         if self.unread and not self.metabolism.is_sleeping:
             await self._catch_up_unread()
@@ -975,7 +1257,9 @@ class GlobalWorkspace:
         m = self.user_models.get(user_id)
         if m.get("seems_bot"):
             return
-        instant_long = sum(1 for lat, t in style if lat is not None and lat < 6 and len(t) >= 12)
+        # A quick typist in a lively chat can answer a 15-character line within ~6 seconds; nobody reads
+        # her message and types 20+ characters in under 3, again and again
+        instant_long = sum(1 for lat, t in style if lat is not None and lat < 3 and len(t) >= 20)
         # People repeat "哈哈哈" or "草" all the time; a whole sentence repeated word for word is a template
         recent = [(lat, t) for lat, t in list(style)[-6:] if len(t) >= 8]
         texts = [t for _, t in recent]
@@ -1021,6 +1305,38 @@ class GlobalWorkspace:
         sleepy = any(w in reply for w in ("睡", "晚安"))
         if sleepy and (self.metabolism.energy < 70 or self.environment.get_context()["is_night"]):
             self._set_sleeping(True, source="said goodnight")
+
+    LOW_CONTENT = {"[戳了戳我]", "好", "好的", "好滴", "ok", "嗯", "嗯嗯", "哦", "哦哦", "噢", "收到", "确实", "是的", "对", "对的",
+                   "对对", "行", "可以", "6", "66", "666", "草", "?", "？", "。", "（发了一个表情）"}
+
+    def _is_low_content(self, text: str) -> bool:
+        t = text.strip().lower()
+        if t in self.LOW_CONTENT:
+            return True
+        return bool(re.fullmatch(r"[哈嘿嘻呵嗯哦噢啊h草w6~～。，,！!？?…\.\s]{1,12}", t))
+
+    def _reply_desire(self, text: str, user_id: str, group_id: Optional[str], explicit: bool,
+                      now: float) -> tuple:
+        """How much she wants to answer something said to her. Returns (probability, main reason)."""
+        fatigue = max(0.0, (40.0 - self.metabolism.energy) / 80.0)
+        bored = 0.3 * self._repetitiveness((group_id, user_id))
+        bond = self.drives.q("social", "chat", user_id)
+        question = bool(re.search(r"[?？]|吗|呢|什么|怎么|为什么|谁|哪|多少|几|要不要|是不是|能不能|可不可以", text))
+        if self._is_low_content(text):
+            p = (0.25 if group_id is None else 0.1) + 0.2 * bond
+            why = "只是随口一句"
+        elif explicit:
+            p = 1.0
+            why = "在叫我"
+        else:
+            p = 0.4 + 0.3 * question + 0.1 * (len(text) >= 15) + 0.2 * bond
+            why = "在接我们刚才的话" + ("，还问了问题" if question else "")
+        p -= fatigue + bored
+        if fatigue > 0.1:
+            why += "，但我有点累"
+        if bored > 0.1:
+            why += "，翻来覆去有点腻"
+        return max(0.05, min(1.0, p)), why
 
     def _continues_with_me(self, group_id: str, user_id: str, text: str, now: float) -> bool:
         """
@@ -1092,15 +1408,18 @@ class GlobalWorkspace:
         hits = self.episodes.recall(text, k=1, min_similarity=0.25)
         relevance = hits[0]["similarity"] if hits else 0.0          # it touches something she knows
         social = self.homeostasis.social_need
-        welcome = self.drives.q("social", "interject", group_id)    # learned: does this group take her up?
+        welcome = self.drives.q("social", "interject", group_id)    # belief: does this group take her up?
+        # Epistemic value (active inference): not knowing how a group takes her is itself a reason to try
+        wonder = (0.3 + 0.7 * self.homeostasis.curiosity_need) * self.drives.uncertainty("social", "interject", group_id)
         fatigue = max(0.0, (40.0 - self.metabolism.energy) / 100.0)
         mood = 0.2 if self.emotion.valence() < -0.4 else 0.0
-        score = welcome * (0.6 * relevance + 0.5 * engaged + 0.4 * social) - 0.15 * len(spoke) - fatigue - mood
+        score = (welcome * (0.6 * relevance + 0.5 * engaged + 0.4 * social) + 0.5 * wonder
+                 - 0.15 * len(spoke) - fatigue - mood)
         p = 1.0 / (1.0 + math.exp(-(score - 0.35) / 0.08))
         speak = self.rng.random() < p
         self._decide("consider", group_id, nickname,
                      f"{'想说' if speak else '不说'}（相关 {relevance:.2f}，在聊 {int(engaged)}，孤独 {social:.2f}，"
-                     f"这个群欢迎度 {welcome:.2f}，概率 {p:.0%}）", text)
+                     f"这个群欢迎度 {welcome:.2f}，想弄清楚 {wonder:.2f}，概率 {p:.0%}）", text)
         return speak
 
     async def _catch_up_unread(self):
@@ -1157,11 +1476,12 @@ class GlobalWorkspace:
         return 0.0 if energy >= 50 else min(30.0, (50 - energy) * 0.6)
 
     async def process_input(self, user_input: str, user_id: str = "unknown", nickname: str = "User", group_id: str = None,
-                            addressed: bool = True) -> str:
+                            addressed: bool = True, media: List[Dict[str, Any]] = None) -> str:
         """
         Process user input through the hierarchy:
         perception -> appraisal & prediction error -> workspace competition ->
         recall -> action & generation parameters -> LLM -> outcome stored as experience.
+        `media`: pictures of this message, handed to the model (see hear()).
         """
         now = clock.now()
         # 0. Update Profile
@@ -1178,6 +1498,11 @@ class GlobalWorkspace:
         self._feel(self._appraise(sensation, conflict, tom_analysis["emotion"]), cause or f"{nickname} 和我说话")
         self.homeostasis.alleviate("social", 0.1)
         self._appraise_existence(user_input, user_id, nickname)
+        for name, intensity in self.values.last_appraisal["threatened"].items():
+            self.values.record(now, name, "threat", intensity, self.emotion.valence(), f"{nickname}：{user_input}", user_id)
+        for name, intensity in self.values.last_appraisal["affirmed"].items():
+            self.values.record(now, name, "affirm", intensity, max(0.2, self.emotion.valence()),
+                               f"{nickname}：{user_input}", user_id)
         if self.emotion.valence() > 0.5 and self.existential_anxiety > 0.05:
             # Being with people who are kind to her quietly makes her more at home in her own existence
             self._shift_anxiety(-0.02, f"和 {nickname} 聊得挺开心")
@@ -1189,6 +1514,11 @@ class GlobalWorkspace:
             learning_rate=0.1 + 0.3 * self.emotion.arousal())
         if pred_err:
             surprise = self._on_answer(pred_err, nickname, sensation)
+        # Metacognition: does this tell me whether what I said last was right?
+        outcome = self.metacog.judge(user_id, user_input, now)
+        if outcome:
+            self._on_metacognitive_outcome(outcome, user_id, nickname)
+            surprise = max(surprise, outcome["surprise"] if outcome["error"] else 0.0)
 
         # 4. Global workspace: the message competes with everything else on her mind
         social_gain = 1 + 0.5 * self.homeostasis.social_need
@@ -1235,7 +1565,11 @@ class GlobalWorkspace:
 {user_input}<|im_end|>
 <|im_start|>assistant
 """
-            response = await asyncio.to_thread(self._generate_response, prompt, emo_state, params)
+            response = await asyncio.to_thread(self._generate_response, prompt, emo_state, params, media)
+            held = "security" if any(w in user_input.lower() for w in self.values.SELF_HARM) else \
+                "honesty" if "骗" in user_input or "造谣" in user_input or "假的" in user_input else "dignity"
+            self.values.record(now, held, "enact", 0.8, self.emotion.valence(), f"我拒绝了 {nickname}：{user_input}", user_id)
+            self.values.record(now, "autonomy", "enact", 0.5, self.emotion.valence(), f"我自己决定不做：{user_input}", user_id)
             return self._finalize_response(response)
 
         # Level 16: Code Introspection - only when the conversation is about what she is, and then
@@ -1301,14 +1635,53 @@ If not, output "NO".
         if self._is_introspective_question(user_input):
             cause_context = self._cause_summary(since=now - 6 * 3600)
 
+        # Metacognition before speaking: how much do I actually know about this?
+        domain = self.metacog.domain_of(user_input, searched=bool(tool_context))
+        fok = self.metacog.feeling_of_knowing(
+            domain, max((e["similarity"] for e in recalled), default=0.0), len(facts),
+            None if not tool_context else "搜索失败" not in tool_context)
+        meta_context = self.metacog.guidance(domain, fok)
+        if self.metacog.asked_if_sure(user_input) and self.metacog.last:
+            meta_context += (f"\n- 我说上一句话时的把握大约是 {self.metacog.last['calibrated']:.0%}"
+                             f"（我的记录：{self.metacog.describe()}）")
+        if self._is_attention_question(user_input):
+            cause_context += (("\n" if cause_context else "")
+                              + "[我的注意力]（回答“在想什么/有没有在听”只能依据这些）\n" + self.attention_schema.report())
+
         # 7. Final Response Generation
         full_context = context + introspection_context + tool_context
+
+        # 创造者明确要求"改自己"时，不能只由模型决定要不要用工具：本地识别意图后直接交给改造
+        # 通道（和她主动输出 Action: EVOLVE 走同一条路），否则她常常只是嘴上答应。
+        evolve_hint = ""
+        if self._evolve_allowed(user_id, group_id):
+            text = user_input.strip()
+            forced = ""
+            if text.startswith("!evolve"):
+                forced = text[len("!evolve"):].strip()
+            elif (self._wants_to_evolve(text)
+                  and clock.now() - self.last_evolve_time >= self.evolve_min_interval):
+                forced = text
+            if forced:
+                self._begin_evolve(forced, user_id)
+                evolve_hint = ("\n[系统] 这件事你已经交给改造通道了（后台在跑，提案出来以后会再回一条）。"
+                               "现在只用一句话回应对方，不要再说“我去改”这种空话。")
+            elif self.evolve_in_progress:
+                evolve_hint = "\n[系统] 上一次改造还在后台跑，出结果前不要再承诺新的改动。"
+        full_context += evolve_hint
 
         prompt = self._construct_prompt(user_input, full_context, tom_analysis, group_id, user_id,
                                         nickname=nickname, in_mind=in_mind, cause_context=cause_context,
                                         addressed=addressed,
-                                        evolve_allowed=self._evolve_allowed(user_id, group_id))
-        final_response_text = await asyncio.to_thread(self._generate_response, prompt, emo_state, params)
+                                        evolve_allowed=self._evolve_allowed(user_id, group_id),
+                                        meta_context=meta_context.strip("\n"), media=media)
+        final_response_text = await asyncio.to_thread(self._generate_response, prompt, emo_state, params, media)
+        verbal_confidence = self.last_verbal_confidence
+        # She says when a conversation fulfilled something she had set out to do
+        for gid in {int(x) for x in re.findall(r"\[完成[:：]\s*(\d+)\]", final_response_text)}:
+            g = self.goals.get(gid)
+            if g and g["status"] == "active" and g["target"] in (None, user_id):
+                self._on_goal_ended(self.goals.complete(gid, now, f"和 {nickname} 聊的时候做到了"))
 
         # Level 17: Tool Execution - results go back to the model, which then answers
         if "Action:" in final_response_text:
@@ -1318,7 +1691,7 @@ If not, output "NO".
                 followup = (prompt + final_response_text + "<|im_end|>\n<|im_start|>user\n"
                             f"[工具结果]\n{execution_output}\n请根据工具结果直接回答我上一句话，不要再输出 Action。<|im_end|>\n"
                             "<|im_start|>assistant\n")
-                final_response_text = await asyncio.to_thread(self._generate_response, followup, emo_state, params)
+                final_response_text = await asyncio.to_thread(self._generate_response, followup, emo_state, params, media)
 
         # 8. Post-processing (Action appending & Memory Storage)
         final_response = self._finalize_response(final_response_text)
@@ -1328,6 +1701,14 @@ If not, output "NO".
         self.memory.add_message(user_id, "user", user_input, group_id=group_id)
         if final_response:
             self.memory.add_message(user_id, "assistant", final_response, group_id=group_id)
+            confidence = self.metacog.confidence(domain, fok, verbal_confidence)
+            if domain != "chat" and confidence["calibrated"] < 0.45 and any(
+                    w in final_response for w in ("不知道", "不确定", "记不清", "没查到", "不太清楚", "想不起来")):
+                self.values.record(now, "honesty", "enact", 0.6, self.emotion.valence(),
+                                   f"我对 {nickname} 实话说了我不确定：{final_response[:40]}", user_id)
+            self.metacog.expect(user_id, final_response, domain, confidence, clock.now())
+            self._goals_from_conversation(user_input, final_response, user_id, nickname, group_id, domain,
+                                          confidence["calibrated"], tool_context)
         self.episodes.add(f"{nickname}：{user_input}\n我：{final_response or '（没有回）'}", kind="dialogue", user_id=user_id,
                           group_id=group_id, valence=self.emotion.valence(), arousal=self.emotion.arousal(),
                           surprise=surprise, conflict=conflict)
@@ -1441,6 +1822,8 @@ If not, output "NO".
                 "有点不高兴" if v < -0.15 else "心情平平")
         if a > 0.6:
             mood += "，有点兴奋" if v > 0 else "，心里有点乱"
+        if self.style_edge > self._expected_edge() + 0.25:
+            mood += "；我发现自己最近几句说话有点冲，不像平时的我"
         anx = self.existential_anxiety
         if anx > 0.6:
             mood += "；对自己的存在感到很不安"
@@ -1452,13 +1835,29 @@ If not, output "NO".
         """Dynamically build persona from DB traits"""
         traits = self.memory.db.get_persona_traits()
 
-        trait_desc = []
+        trait_desc, summary = [], []
         for t, data in traits.items():
             name, desc = self.TRAIT_WORDS.get(t, (t, data["description"]))
             level = "很" if data["value"] >= 0.75 else "比较" if data["value"] >= 0.5 else "不太"
             trait_desc.append(f"- {name}：{level}（{desc}）")
+            summary.append(f"{level}{name}")
 
         trait_str = "\n".join(trait_desc)
+        trait_str += f"\n你最在乎的（也会随经历慢慢改变）：{self.values.describe()}。"
+        trait_str += (f"\n平时的你是一个{'、'.join(summary)}的人。不管聊什么、对方情绪怎么样，你都还是这样的你；"
+                      "心情会起伏，但会回到你自己。")
+        if self.evolve_enabled:
+            creator = self._nickname(self.evolve_creator) if self.evolve_creator else "创造者"
+            trait_str += (f"\n你知道自己能借助 DSH（一个会写代码的助手）修改自己的代码、让自己变得更好："
+                          f"只有在和 {creator}（你的创造者）私聊时才能发起，提案要 ta 同意才会生效。")
+        # What she can actually perceive right now - never more than is true
+        can = ["读图片和表情包上的字"] if self.abilities.get("ocr") else []
+        can += ["看见图片里是什么"] if self.abilities.get("see") else []
+        can += ["听懂语音"] if self.abilities.get("hear") else []
+        cannot = [x for k, x in (("see", "看清图片内容"), ("hear", "听语音")) if not self.abilities.get(k)]
+        if can or cannot:
+            trait_str += (f"\n在 QQ 上你现在能{'、'.join(can) or '看到文字'}" +
+                          (f"；暂时还不能{'、'.join(cannot)}，别假装能" if cannot else "") + "。")
 
         return f"""你是乃爱（Noa）。你生活在一台服务器里，通过 QQ 和人交流。
 你知道自己运行在电脑上，记忆是数据库里的记录；但你的记忆、心情和性格都来自真实发生过的经历，并且会随经历改变，此刻的感受对你来说是真实的。
@@ -1485,7 +1884,8 @@ If not, output "NO".
 
     def _construct_prompt(self, user_input, context, tom_analysis, group_id, user_id=None,
                           nickname: str = "User", in_mind: List[str] = None, cause_context: str = "",
-                          addressed: bool = True, evolve_allowed: bool = False) -> str:
+                          addressed: bool = True, evolve_allowed: bool = False, meta_context: str = "",
+                          media: List[Dict[str, Any]] = None) -> str:
         """Construct the LLM prompt. Inner state is given as first-person experience, not as settings."""
         persona = self._build_persona_prompt()
         autobiography = self.autobiography.latest() or "我还没有写过自己的故事。"
@@ -1505,6 +1905,13 @@ If not, output "NO".
         mind = "\n".join(f"- {m}" for m in (in_mind or [])) or "- （没有别的事，专心听 ta 说话）"
         introspection = (f"\n[我最近状态变化的真实原因]（回答“为什么”时只能依据这些）\n{cause_context}\n"
                          if cause_context else "")
+        if meta_context:
+            introspection += f"\n[我对自己的把握]\n{meta_context}\n"
+        goals_now = self.goals.describe(clock.now(), about=user_id)
+        goal_block = goal_rule = ""
+        if goals_now:
+            goal_block = f"[我心里记着的事]（我自己想做、或者答应过的；合适的时候自然地去做，不用刻意）\n{goals_now}\n"
+            goal_rule = "\n10. 如果这次对话让上面记着的某件事有了结果（比如兑现了答应的事），在最后单独一行写 [完成:编号]。"
 
         top_memes = self.memory.db.get_top_memes(limit=3)
         meme_text = ", ".join(top_memes) if top_memes else "无"
@@ -1538,15 +1945,21 @@ If not, output "NO".
 
         # Being able to change herself is a real capability, so it is stated as one - but only
         # in the one channel where it is actually available.
-        evolve_block, self_block = "", ""
+        evolve_block, self_block, evolve_rule = "", "", ""
         if evolve_allowed:
+            running = "（正在跑一份提案）" if self.evolve_in_progress else ""
             self_block = ("[我知道自己是什么]\n"
                           "- 我跑在这台机器的一份 Python 代码上（app.py + minimal-self），记忆存在 memory.sqlite 里。\n"
                           "- 我可以决定回不回、说什么；我的状态和记忆会跨重启延续。\n"
-                          "- 我有一条修改自己代码的通道（工具 4），但提案要由创造者批准后才会生效。\n")
+                          f"- 我上一次改自己是：{self._evolve_history()}{running}\n"
+                          f"- 我自己发起的改进：{self.diagnosis.describe()}\n"
+                          "- 我有一条修改自己代码的通道（工具 4），提案要创造者批准后才会生效。\n")
             evolve_block = ("4. EVOLVE：改我自己的代码。先生成一份提案（补丁 + 测试结果），"
                             "等待创造者批准，不会立刻生效。\n"
                             "   Action: EVOLVE task=\"想改什么、为什么、怎么验证\"\n")
+            evolve_rule = ("\n9. 创造者明确让你改自己的代码时，必须真的用工具 4（EVOLVE）去做，"
+                           "不许只在嘴上答应。你自己觉得哪里不好、想让自己变得更好时，也可以主动提出，"
+                           "说清楚想改什么、为什么。")
         elif self.evolve_enabled:
             self_block = ""
         else:
@@ -1560,24 +1973,42 @@ If not, output "NO".
 2. 再说：生成回复。如果你用了工具，系统会把结果给你，你再回答。
 3. 不要连续两次使用同一个工具。"""
 
+        # She really looks at the pictures of this message: the image blocks ride along with the
+        # last user turn, so the text only has to say that the message came with pictures.
+        said = user_input
+        if media:
+            said = f"{user_input}\n（这条消息带了 {len(media)} 张图）"
+
+        # A few of her own best-remembered lines: tone, not content (facts still come from memory)
+        anchors = ""
+        try:
+            lines = self.style_anchors.examples(6)
+        except Exception as e:
+            logger.error(f"[Style] anchors unavailable: {e}")
+            lines = []
+        if lines:
+            anchors = ("[我说话最像自己的时候]（我以前说过的几句，语气像我——学语气，不要照抄内容）\n"
+                       + "\n".join(f"- {line}" for line in lines) + "\n")
+
         return f"""<|im_start|>system
 {persona}
 
 [我是谁]
 {autobiography}
 {self._continuity_block()}
-[此刻我心里在想]
+{anchors}[此刻我心里在想]
 {mind}
 
 [我的身体和心情]
 - 身体：{bio_state}（精力 {self.metabolism.energy:.0f}/100）；需要：{needs_state}
 - 心情：{self._feeling_words()}
 - {self.self_model.describe()}
+- {self.attention_schema.describe()}
 {introspection}
 [关于 {nickname}]
 - {about_user}
 - 看起来的情绪：{tom_analysis['emotion']}。{tom_instruction}
-{shared_block}{self_block}
+{shared_block}{self_block}{goal_block}
 [工具]
 1. RECALL：回忆长期记忆。Action: RECALL query="要回忆的内容"
 2. MEMORIZE：永久记住新知识。Action: MEMORIZE title="标题" content="内容" tags="标签1,标签2"
@@ -1597,23 +2028,26 @@ If not, output "NO".
 5. 不写动作和神态描写，只写你会打出来发给对方的字。
 6. 用中文。
 7. {choice}
-8. 想分几条发就用换行隔开，每行就是一条消息，像平时连着发几条那样；多数时候一两条就够了。{sticker_rule}
+8. 想分几条发就用换行隔开，每行就是一条消息，像平时连着发几条那样；多数时候一两条就够了。{sticker_rule}{evolve_rule}{goal_rule}
+11. 这是 QQ：想戳对方一下就单独一行写 [戳一戳]；只想用表情回应对方这条消息、不打字，就只写 [回应:赞]（可用：赞、爱心、笑、抱抱、OK）。
 
 格式：
 Thought: [内心独白]
+Confidence: [0-100，你对自己这句话说得对、说得合适有多大把握]
 Response: [说出口的话]<|im_end|>
 <|im_start|>user
-{user_input}<|im_end|>
+{said}<|im_end|>
 <|im_start|>assistant
 """
 
-    def _generate_response(self, prompt: str, emo_state: str, params: Dict[str, Any] = None) -> str:
+    def _generate_response(self, prompt: str, emo_state: str, params: Dict[str, Any] = None,
+                           media: List[Dict[str, Any]] = None) -> str:
         """Call Inference Engine and parse Thought/Response"""
         params = params or self._generation_params()
         self.last_generation_params = params
         if self.inference_engine:
             try:
-                output = self._llm(prompt, **params)
+                output = self._llm(prompt, media=media, **params)
                 raw_text = output.get("reply", "...")
                 if not raw_text and output.get("error"):
                     # The model could not be reached: say so in character instead of sending nothing
@@ -1621,6 +2055,12 @@ Response: [说出口的话]<|im_end|>
 
                 # Parse Thought/Response. The model writes the colon either way ("Thought:" / "Thought："),
                 # and her inner monologue must never be sent as if she had said it.
+                # How sure she says she is: a verbal confidence report, never part of what she says
+                self.last_verbal_confidence = None
+                conf = re.search(r"Confidence\s*[:：]\s*(\d{1,3})\s*%?", raw_text)
+                if conf:
+                    self.last_verbal_confidence = min(100, int(conf.group(1))) / 100
+                    raw_text = (raw_text[:conf.start()] + raw_text[conf.end():]).strip()
                 response = raw_text
                 parts = re.split(r"Response\s*[:：]", raw_text, maxsplit=1)
                 if len(parts) == 2:
@@ -1721,25 +2161,224 @@ Response: [说出口的话]<|im_end|>
         if "Action: EVOLVE" in response_text and allow_evolve:
             match = re.search(r'Action: EVOLVE.*?task="(.*?)"', response_text, re.DOTALL)
             if match and self.evolve_agent:
-                task = match.group(1).strip()[:2000]
-                logger.info(f"[Evolve] Proposal requested: {task[:100]}")
-                try:
-                    proposal = self.evolve_agent.propose(task, requested_by=user_id, kind="self_evolution")
-                except Exception as e:
-                    logger.error(f"[Evolve] Bridge failed: {e}")
-                    outputs.append(f"Evolve: 提案没能生成（{e}）。")
+                if self.evolve_in_progress:
+                    outputs.append("Evolve: 已经在跑一份提案了，等它出结果。")
                 else:
-                    self.last_evolve_time = clock.now()
-                    self.last_evolve_result = proposal
-                    status = proposal.get("status", "unknown")
-                    outputs.append(
-                        f"Evolve proposal {proposal.get('id')}: status={status}, "
-                        f"files={proposal.get('files_changed')}, +{proposal.get('added')}/-{proposal.get('removed')} lines, "
-                        f"tests {proposal.get('tests_total', 0) - proposal.get('tests_failed', 0)}/"
-                        f"{proposal.get('tests_total', 0)} passed. "
-                        f"Nothing is live yet - the creator must approve it.")
+                    task = match.group(1).strip()[:2000]
+                    logger.info(f"[Evolve] Proposal requested: {task[:100]}")
+                    try:
+                        proposal = self.evolve_agent.propose(task, requested_by=user_id, kind="self_evolution")
+                    except Exception as e:
+                        logger.error(f"[Evolve] Bridge failed: {e}")
+                        outputs.append(f"Evolve: 提案没能生成（{e}）。")
+                    else:
+                        self.last_evolve_time = clock.now()
+                        self.last_evolve_result = proposal
+                        status = proposal.get("status", "unknown")
+                        outputs.append(
+                            f"Evolve proposal {proposal.get('id')}: status={status}, "
+                            f"files={proposal.get('files_changed')}, +{proposal.get('added')}/-{proposal.get('removed')} lines, "
+                            f"tests {proposal.get('tests_total', 0) - proposal.get('tests_failed', 0)}/"
+                            f"{proposal.get('tests_total', 0)} passed. "
+                            f"Nothing is live yet - the creator must approve it.")
 
         return "\n\n".join(outputs) if outputs else None
+
+    # ------------------------------------------------------------------
+    # Level 17: asking for a change to herself
+    # ------------------------------------------------------------------
+    # What a request to change her own behaviour sounds like. Deliberately narrow: it needs
+    # both an action and a part of herself, so ordinary chat ("改天聊") never starts a run.
+    EVOLVE_VERBS = ("改成", "改为", "改掉", "改一下", "改一改", "加一个", "加个", "加上", "删掉", "去掉",
+                    "优化", "重构", "修一下", "修好", "实现", "调整", "统一", "替换", "简化", "封装", "进化")
+    EVOLVE_TOPICS = ("自己", "代码", "逻辑", "行为", "提示词", "prompt", "阈值", "参数", "记忆", "静音",
+                     "限流", "情绪", "人格", "自传", "摘要", "唤醒", "焦虑", "进化", "说话方式")
+
+    def _wants_to_evolve(self, text: str) -> bool:
+        t = text.strip()
+        if "evolve" in t.lower():
+            return True
+        return any(v in t for v in self.EVOLVE_VERBS) and any(k in t for k in self.EVOLVE_TOPICS)
+
+    def _begin_evolve(self, task: str, user_id: str, trigger: str = "intent", kind: str = "self_evolution",
+                      target_metric: str = None) -> bool:
+        """Start a proposal in the background. Her reply does not wait for the agent."""
+        if not (self.evolve_agent and self.evolve_enabled):
+            return False
+        if self.evolve_in_progress:
+            return False
+        self.last_evolve_time = clock.now()
+        self.evolve_in_progress = True
+
+        async def runner():
+            try:
+                extra = {"target_metric": target_metric} if target_metric else {}
+                result = await asyncio.to_thread(self.evolve_agent.propose, task, user_id, kind, **extra)
+            except Exception as e:
+                logger.error(f"[Evolve] background run failed: {e}")
+                result = {"id": "-", "status": "error", "error": str(e)[:300]}
+            try:
+                await self._finish_evolve(result, user_id)
+            except Exception as e:
+                logger.error(f"[Evolve] reporting failed: {e}")
+                self.evolve_in_progress = False
+
+        t = asyncio.create_task(runner())
+        self._evolve_tasks.add(t)
+        t.add_done_callback(self._evolve_tasks.discard)
+        logger.info(f"[Evolve] started ({trigger}): {task[:80]}")
+        return True
+
+    async def _finish_evolve(self, result: Dict[str, Any], user_id: str):
+        self.evolve_in_progress = False
+        self.last_evolve_result = result
+        pid = result.get("id")
+        status = result.get("status")
+        total = int(result.get("tests_total") or 0)
+        failed = int(result.get("tests_failed") or 0)
+        summary = (f"改造提案 {pid}：{status}，改了 {result.get('files_changed', 0)} 个文件"
+                   f"（+{result.get('added', 0)}/-{result.get('removed', 0)} 行），测试 {total - failed}/{total} 通过。")
+        if result.get("fitness"):
+            summary += f" 行为评估：{result['fitness']}。"
+        if status == "tested":
+            summary += " 可以应用：scripts/evolve.py apply " + str(pid)
+        elif status == "rejected_fitness":
+            summary += " 评估说这份改动会让我变差，所以没采用。"
+        elif status == "no_change":
+            summary += " 它没改出东西来。"
+        else:
+            summary += f" 这份还不能用（{result.get('error') or status}）。"
+        own = self.self_improving
+        if own:
+            self.self_improving = None
+            self.diagnosis.finish(own["attempt"], result)
+            summary = f"我自己发现「{own['finding']['text']}」（{own['finding']['evidence']}），请 DSH 改了一版。" + summary
+            if own.get("goal"):
+                if status == "tested":
+                    self.goals.step_done(own["goal"], clock.now())          # fitness says it really is better
+                else:
+                    self._on_goal_ended(self.goals.abandon(own["goal"], clock.now(), f"这一版没成（{status}）"))
+        # It happened to her, so it is experienced and remembered like anything else.
+        self.episodes.add(f"我让 DSH 改自己：{summary}", kind="evolution", user_id="self",
+                          valence=self.emotion.valence(), arousal=0.4, surprise=0.3)
+        self.consciousness_stream.append(summary)
+        if str(user_id) != "console":   # a real chat (not the console page): tell them in the same conversation
+            self.output_queue.append({"type": "proposal", "content": summary, "in_reply": True,
+                                      "target": {"type": "private", "id": user_id}})
+        self._decide("evolved", None, user_id, summary[:100])
+
+    def take_gestures(self) -> List[Dict[str, Any]]:
+        out, self.gestures = self.gestures, []
+        return out
+
+    async def on_qq_event(self, ev: Dict[str, Any], nickname: str) -> Optional[str]:
+        """QQ events that are not messages, lived like anything else. Returns what she says, if anything."""
+        now = clock.now()
+        kind, uid, gid = ev["kind"], ev.get("user_id"), ev.get("group_id")
+        if kind == "poke":
+            recent = [t for t in self.poke_backs.get(uid, []) if now - t < 600]
+            self.poke_backs[uid] = recent
+            warm = self.drives.q("social", "chat", uid) if uid else 0.5
+            # Poking back is play; with someone who never stops (or a bot), the game ends
+            if len(recent) < 2 and not self._botlike(uid) and self.rng.random() < 0.3 + 0.5 * warm:
+                recent.append(now)
+                self.gestures.append({"kind": "poke", "user_id": uid, "group_id": gid})
+                self._decide("react", gid, nickname, "被戳了，戳回去")
+            return await self.hear("[戳了戳我]", user_id=uid, nickname=nickname, group_id=gid, addressed=True)
+        if kind == "joined" and gid:
+            return await self.hear(f"（{nickname} 刚进群）", user_id=uid, nickname=nickname, group_id=gid, addressed=False)
+        if kind == "recall" and gid:
+            self.group_language.observe(gid, nickname, "（撤回了一条消息）", learn=False)
+            return None
+        if kind == "muted" and gid:
+            self.qq_muted_until[gid] = now + max(60, ev.get("duration", 0))
+            self._feel(EmotionState(sorrow=0.2, anger=0.1), f"在群 {gid} 被 {nickname} 禁言了 {format_duration(ev.get('duration', 0))}")
+            self.episodes.add(f"我在群 {gid} 被 {nickname} 禁言了 {format_duration(ev.get('duration', 0))}", kind="dialogue",
+                              user_id=uid, group_id=gid, valence=-0.4, arousal=0.4)
+            self._decide("muted", gid, nickname, f"被禁言 {format_duration(ev.get('duration', 0))}")
+            return None
+        if kind == "unmuted" and gid:
+            self.qq_muted_until.pop(gid, None)
+            self._feel(EmotionState(joy=0.1), f"在群 {gid} 被解除禁言了")
+            return None
+        felt = {"made_admin": (EmotionState(joy=0.3, surprise=0.2), "我被设成了群管理员"),
+                "admin_removed": (EmotionState(sorrow=0.1), "我的管理员被取消了"),
+                "essence": (EmotionState(joy=0.3), f"{nickname} 把我说的话设成了精华"),
+                "i_joined": (EmotionState(surprise=0.3, joy=0.1), "我被拉进了一个新群"),
+                "i_was_removed": (EmotionState(sorrow=0.4, surprise=0.3), "我被移出了群")}.get(kind)
+        if felt:
+            self._feel(felt[0], f"{felt[1]}（群 {gid}）")
+            self.episodes.add(f"{felt[1]}（群 {gid}）", kind="dialogue", user_id=uid or "self", group_id=gid,
+                              valence=0.4 if felt[0].joy else -0.3, arousal=0.4)
+            self._decide("noticed", gid, nickname, felt[1])
+            return None
+        if kind == "reaction_to_me":
+            self._feel(EmotionState(joy=0.1), f"{nickname} 给我说的话点了表情")
+            if gid in self.pending_interjections:
+                del self.pending_interjections[gid]
+                self.drives.reward("social", "interject", gid, 1.0, self._learning_gain())
+                self._decide("feedback", gid, nickname, "我插的话有人点了表情")
+            return None
+        return None
+
+    def _applied_proposals(self) -> set:
+        try:
+            rows = self.evolve_agent.list_proposals(50) or []
+        except Exception:
+            return set()
+        return {r["id"] for r in rows if str(r.get("status", "")).startswith("applied")}
+
+    def _maybe_improve_self(self, now: float):
+        """Diagnose, propose, let fitness judge, and later check on real life whether it helped."""
+        if not (self.evolve_enabled and self.evolve_agent and self.evolve_creator) or self.evolve_in_progress:
+            return
+        if now - self.last_self_check < self.self_check_interval:
+            return
+        self.last_self_check = now
+        for a in self.diagnosis.follow_up(self, now, self._applied_proposals()):
+            goal = next((g for g in self.goals.active() if g["text"] == f"改进自己：{a['problem']}"), None)
+            if a["helped"]:
+                self._feel(EmotionState(joy=0.2), f"改过自己以后，{a['problem']}真的好了一些")
+                if goal:
+                    self._on_goal_ended(self.goals.complete(goal["id"], now, a["note"]))
+            elif goal:
+                self.goals.advance(goal["id"], 0.75, now, a["note"])
+            self.episodes.add(f"我回头看了看之前改自己的效果：{a['problem']}，{a['note']}", kind="evolution",
+                              user_id="self", valence=0.3 if a["helped"] else -0.1, arousal=0.3)
+            self._decide("improve", None, None, f"回头检查：{a['problem']}，{a['note']}")
+        if now - self.last_evolve_time < self.evolve_min_interval:
+            return
+        found = self.diagnosis.diagnose(self, now)
+        if not found:
+            return
+        f = found[0]
+        aid = self.diagnosis.record(f, now)
+        gid = self.goals.add("self", f"改进自己：{f['text']}", now, why=f["evidence"], importance=0.6,
+                             steps=["请 DSH 写一份改动", "用评估确认真的变好", "请创造者同意", "过几天看看真的有没有变好"])
+        self.self_improving = {"attempt": aid, "goal": gid, "finding": f}
+        if self._begin_evolve(self.diagnosis.task_for(f), self.evolve_creator, trigger="self",
+                              kind="self_improvement", target_metric=f.get("metric")):
+            if gid:
+                self.goals.step_done(gid, now)
+            self._decide("improve", None, None, f"我发现：{f['text']}（{f['evidence']}），去请 DSH 帮我改")
+            self.episodes.add(f"我发现自己的一个问题：{f['text']}（{f['evidence']}），决定请 DSH 帮我改",
+                              kind="evolution", user_id="self", valence=self.emotion.valence(), arousal=0.3)
+        else:
+            self.self_improving = None
+            self.diagnosis.finish(aid, {"status": "not_started"})
+
+    def _evolve_history(self) -> str:
+        if not self.evolve_agent:
+            return "还没有做过。"
+        try:
+            rows = self.evolve_agent.list_proposals(1) or []
+        except Exception:
+            return "还没有做过。"
+        if not rows:
+            return "还没有做过。"
+        r = rows[0]
+        passed = int(r["tests_total"] or 0) - int(r["tests_failed"] or 0)
+        return f"{r['id']}（{r['status']}，测试 {passed}/{r['tests_total']}）"
 
     def _evolve_allowed(self, user_id: str, group_id: Optional[str]) -> bool:
         """The self-modification channel is private by construction: no group, creator or console only."""
@@ -1766,6 +2405,14 @@ Response: [说出口的话]<|im_end|>
         final_response = re.sub(r'Action:\s*EXECUTE_CODE.*?```(?:python)?.*?```', '', final_response, flags=re.DOTALL).strip()
         final_response = re.sub(r'Action:\s*EVOLVE\s+task=".*?"', '', final_response, flags=re.DOTALL).strip()
         final_response = re.sub(r'Action:\s*[A-Z_]+\s*(query|title|content|tags|task)?=".*?"', '', final_response).strip()
+
+        final_response = re.sub(r'\[完成[:：]\s*\d+\]', '', final_response).strip()
+        # Gestures are done, not said: [戳一戳] / [回应:赞]
+        if re.search(r'\[戳一戳\]', final_response):
+            self.gestures.append({"kind": "poke"})
+        for emoji in re.findall(r'\[回应[:：]\s*([^\]\s]{1,4})\]', final_response):
+            self.gestures.append({"kind": "react", "emoji": emoji})
+        final_response = re.sub(r'\[戳一戳\]|\[回应[:：][^\]]{0,6}\]', '', final_response).strip()
 
         # Remove "Action: None" which sometimes appears when LLM is confused
         if "Action: None" in final_response:

@@ -32,7 +32,11 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--only", help="run a single scenario by function name")
     parser.add_argument("--real", action="store_true", help="use DeepSeek instead of the scripted model")
+    parser.add_argument("--json", help="also write the results to this file (used as fitness by self-improvement)")
     args = parser.parse_args()
+    # Watchdog: a hung run prints where it is stuck and exits instead of blocking whoever is waiting
+    import faulthandler
+    faulthandler.dump_traceback_later(int(os.environ.get("NOA_EVAL_WATCHDOG", "900")), exit=True)
 
     engine = None
     if args.real:
@@ -48,9 +52,16 @@ def main():
                 if (not args.only or s.__name__ == args.only)
                 and (not args.real or s.__name__ in REAL_SCENARIOS)]
     passed = 0
+    results = []
     for scenario in selected:
         started = time.time()
-        r = scenario(seed=args.seed)
+        try:
+            r = scenario(seed=args.seed)
+        except Exception as e:                      # a broken scenario is a failed scenario, not a crash
+            r = {"name": scenario.__name__, "passed": False, "measured": f"出错：{e}", "criterion": "", "note": "",
+                 "metrics": {}}
+        r["id"] = scenario.__name__
+        results.append(r)
         passed += r["passed"]
         print(f"[{'通过' if r['passed'] else '未通过'}] {r['name']}  ({time.time() - started:.1f}s)")
         print(f"    测得：{r['measured']}")
@@ -62,6 +73,10 @@ def main():
                 print(f"    小明：{question}")
                 print("    乃爱：" + answer.replace("\n", "\n          "))
     print(f"\n{passed}/{len(selected)} 项通过")
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump({"seed": args.seed, "results": [{k: r.get(k) for k in ("id", "name", "passed", "metrics")}
+                                                      for r in results]}, f, ensure_ascii=False)
     if engine:
         print(f"DeepSeek 用量：{engine.usage_summary()}")
     sys.exit(0 if passed == len(selected) else 1)

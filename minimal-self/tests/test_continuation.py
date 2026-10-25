@@ -41,8 +41,10 @@ class TestContinuation(unittest.TestCase):
         gw = make_gw()                                     # G is not even an autonomous group
         self.assertTrue(hear(gw, "乃爱你觉得显卡贵不贵", addressed=True))
         clock.get_clock().advance(40)
-        self.assertTrue(hear(gw, "我觉得还会再涨"))          # no name, no @: still talking to her
-        self.assertEqual(gw.decisions[-1]["detail"], "接着聊")
+        hear(gw, "你觉得还会再涨吗")                         # no name, no @: still talking to her
+        # Whether she answers is her choice; that she treats it as their conversation is not
+        last = gw.decisions[-1]
+        self.assertTrue(last["detail"] == "接着聊" or "接我们刚才的话" in last["detail"], last)
 
     def test_conversation_goes_cold(self):
         gw = make_gw()
@@ -61,8 +63,9 @@ class TestContinuation(unittest.TestCase):
         gw.autonomous_groups = {"G"}
         hear(gw, "乃爱你觉得显卡贵不贵", addressed=True)
         clock.get_clock().advance(30)
-        self.assertTrue(hear(gw, "显卡贵得离谱，我都不敢买了", user="u2", nick="小红"))
-        self.assertEqual(gw.decisions[-1]["detail"], "接着聊")
+        hear(gw, "显卡贵得离谱，我都不敢买了", user="u2", nick="小红")
+        last = gw.decisions[-1]
+        self.assertTrue(last["detail"] == "接着聊" or "接我们刚才的话" in last["detail"], last)
         # ...but in a group where she does not speak freely, only her interlocutor carries it on
         gw2 = make_gw()
         hear(gw2, "乃爱你觉得显卡贵不贵", addressed=True)

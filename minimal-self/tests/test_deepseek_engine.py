@@ -114,5 +114,45 @@ class TestRequests(unittest.TestCase):
         finally:
             DeepSeekEngine._lookup_key = original
 
+class TestPictures(unittest.TestCase):
+    """Pictures ride along with the last user turn, so the model looks at the picture itself."""
+
+    PROMPT = ("<|im_start|>system\nS<|im_end|>\n<|im_start|>user\n你看这个<|im_end|>\n"
+              "<|im_start|>assistant\n")
+
+    def test_pictures_become_content_parts_of_the_user_turn(self):
+        e, s = engine([ok("好可爱")])
+        e.generate_json(self.PROMPT, media=[{"data": b"\xff\xd8\xff\xe0-jpeg-", "mime": "image/jpeg"},
+                                            {"data": b"\x89PNG\r\n\x1a\n-png-", "mime": "image/png"}])
+        messages = s.requests[0]["body"]["messages"]
+        self.assertEqual([m["role"] for m in messages], ["system", "user"])
+        content = messages[-1]["content"]
+        self.assertIsInstance(content, list)
+        self.assertEqual(content[0], {"type": "text", "text": "你看这个"})
+        self.assertEqual(len(content), 3)
+        self.assertEqual(content[1]["type"], "image_url")
+        self.assertTrue(content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+        self.assertTrue(content[2]["image_url"]["url"].startswith("data:image/png;base64,"))
+
+    def test_without_pictures_nothing_changes(self):
+        e, s = engine([ok("嗯")])
+        e.generate_json(self.PROMPT)
+        self.assertEqual(s.requests[0]["body"]["messages"][-1]["content"], "你看这个")
+
+    def test_at_most_three_pictures(self):
+        e, s = engine([ok("看到了")])
+        media = [{"data": b"x", "mime": "image/jpeg"} for _ in range(6)]
+        e.generate_json(self.PROMPT, media=media)
+        content = s.requests[0]["body"]["messages"][-1]["content"]
+        self.assertEqual(len(content), 4)                      # 1 text + 3 pictures
+
+    def test_picture_types_are_sniffed(self):
+        from napcat.senses import Senses
+        self.assertEqual(Senses._mime(b"\xff\xd8\xff\xe0"), "image/jpeg")
+        self.assertEqual(Senses._mime(b"\x89PNG\r\n\x1a\n"), "image/png")
+        self.assertEqual(Senses._mime(b"GIF89a"), "image/gif")
+        self.assertEqual(Senses._mime(b"RIFF\x00\x00\x00\x00WEBPVP8 "), "image/webp")
+
+
 if __name__ == "__main__":
     unittest.main()

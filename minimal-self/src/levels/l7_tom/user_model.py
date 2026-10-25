@@ -76,6 +76,7 @@ class UserModelStore:
         """The person spoke. Returns the prediction error if an answer was expected."""
         m = self.get(user_id)
         m["private"] = m["private"] or private
+        m["messages"] = m.get("messages", 0) + 1
         pending = m["pending"]
         error = None
         if pending:

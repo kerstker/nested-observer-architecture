@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import random
 import tempfile
 import unittest
 
@@ -15,7 +16,7 @@ DAY = {"time": "12:00", "period": "Day", "weather": "Sunny", "festival": None, "
 def make_gw(reply="哈哈是吗，那你呢？"):
     clock.set_clock(SimClock(START + 4 * 3600))
     db = os.path.join(tempfile.mkdtemp(prefix="noa_loop_"), "l.sqlite")
-    gw = GlobalWorkspace(EventBus(), ScriptedLLM(reply), db_path=db)
+    gw = GlobalWorkspace(EventBus(), ScriptedLLM(reply), db_path=db, rng=random.Random(0))
     gw.search_tool = StubSearch()
     gw.environment.get_context = lambda: DAY
     return gw
@@ -52,8 +53,9 @@ class TestNoEndlessLoops(unittest.TestCase):
         gw = make_gw("嗯嗯")
         c = clock.get_clock()
         replied = 0
-        for i in range(10):
-            replied += bool(hear(gw, f"今天第{i}件事", group="G"))
+        for t in ["今天上班迟到了", "老板居然没发现", "中午吃了麻辣烫", "下午开了三个会", "同事带了蛋糕",
+                  "晚上打算去健身", "最近在追一部剧", "主角演得真好", "周末想去爬山", "你有推荐的地方吗"]:
+            replied += bool(hear(gw, t, group="G"))
             c.advance(60)
         self.assertEqual(replied, 10)
         self.assertFalse(gw.user_models.get("u1").get("seems_bot"))
@@ -82,7 +84,8 @@ class TestNoEndlessLoops(unittest.TestCase):
             replied += bool(hear(gw, f"{lines[i % len(lines)]}，第{i // len(lines) + 1}次想起来还是觉得离谱"))
             c.advance(240)
             asyncio.run(gw.tick())
-        self.assertGreaterEqual(replied, 110)
+        self.assertGreaterEqual(replied, 95)                 # she skips a few when tired; never cut off
+        self.assertNotIn("limit", [d["kind"] for d in gw.decisions])
         self.assertLess(gw.metabolism.energy, 70)   # she is tired by the end of it, as anyone would be
 
     def test_going_round_in_circles_bores_her(self):
@@ -132,7 +135,8 @@ class TestNoEndlessLoops(unittest.TestCase):
         for i in range(60):                              # a very lively hour: everyone keeps talking to her
             replied += bool(hear(gw, f"乃爱乃爱，第{i}个问题是关于{i * 7 % 13}号话题的", user=f"p{i % 5}", group="G"))
             c.advance(20)
-        self.assertEqual(replied, 60)
+        self.assertNotIn("limit", [d["kind"] for d in gw.decisions])   # no cap ever stopped her
+        self.assertGreaterEqual(replied, 30)       # the rest is her own choice (templated questions bore her)
         gw.user_models.get("botB")["seems_bot"] = True    # ...but a bot still cannot drag her into a loop
         bot = [bool(hear(gw, "@乃爱 收到！", user="botB", group="G")) for _ in range(6)]
         self.assertEqual(bot.count(True), gw.max_replies_to_botlike_10min)

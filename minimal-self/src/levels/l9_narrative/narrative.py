@@ -43,7 +43,8 @@ class NarrativeSelf:
         return max(abs(e["valence"]), e["arousal"]) + e["surprise"]
 
     def consolidate(self, llm: Optional[Callable[[str], Dict[str, Any]]] = None,
-                    phrase_candidates: List[str] = None) -> Optional[Dict[str, Any]]:
+                    phrase_candidates: List[str] = None, goals_text: str = None,
+                    values_text: str = None) -> Optional[Dict[str, Any]]:
         eps = self.episodes.unconsolidated()
         if not eps:
             return None
@@ -52,18 +53,30 @@ class NarrativeSelf:
         report = {"episodes": len(eps), "trait_changes": self.drift_traits(eps)}
 
         if llm:
-            report.update(self._reflect(salient, llm, phrase_candidates or []))
+            report.update(self._reflect(salient, llm, phrase_candidates or [], goals_text, values_text))
 
         self.episodes.mark_consolidated([e["id"] for e in eps])
         logger.info(f"[Dream] Consolidated {len(eps)} episodes: {report}")
         return report
 
     def _reflect(self, salient: List[Dict[str, Any]], llm: Callable[[str], Dict[str, Any]],
-                 phrase_candidates: List[str]) -> Dict[str, Any]:
+                 phrase_candidates: List[str], goals_text: str = None, values_text: str = None) -> Dict[str, Any]:
         lines = "\n".join(f"[{e['id']}] ({e['kind']}, 用户 {e['user_id']}, 心情 {e['valence']:+.1f}) {e['content'][:160]}"
                           for e in salient)
         previous = self.autobiography.latest() or "（还没有写过）"
         heard = "、".join(phrase_candidates) or "（没有）"
+        goal_block, goal_keys = "", ""
+        if goals_text is not None:
+            # Reflection is where she decides what she wants for herself (cf. Generative Agents' planning)
+            goal_block = f"\n我给自己定的目标（编号、内容、进展）：\n{goals_text}\n"
+            goal_keys = (',\n  "goal_review": [{"id": 编号, "progress": 0到1, "note": "依据今天的哪些事"}],\n'
+                         '  "new_goal": {"text": "从今天的经历里，我自己真正想去做的一件事（第一人称）", '
+                         '"why": "为什么", "steps": ["第一步", "第二步"], "episodes": [编号]} 或 null')
+        value_block, value_keys = "", ""
+        if values_text:
+            value_block = f"\n今天和我在乎的东西（价值）有关的时刻：\n{values_text}\n"
+            value_keys = (',\n  "value_reflection": {"value": "dignity/honesty/connection/curiosity/autonomy/security/fairness 之一", '
+                          '"direction": 1 或 -1, "why": "今天哪件事让我更（或没那么）在乎它", "episodes": [编号]} 或 null')
         prompt = f"""<|im_start|>system
 你是正在睡觉的乃爱(Noa)，在梦里整理今天真实发生过的事。下面每条都带编号，只能依据这些内容，不要编造。
 今天的经历：
@@ -74,13 +87,13 @@ class NarrativeSelf:
 
 群里好几个人反复说的片段（可能是梗，也可能只是常用词）：
 {heard}
-
+{goal_block}{value_block}
 输出 JSON：
 {{
   "diary": "第一人称日记，150字以内，提到的每件事都要来自上面的经历",
   "autobiography": "重写后的自传，200字以内：我是谁、我经历过什么、我和身边的人是什么关系",
   "facts": [{{"user_id": "...", "fact": "关于这个人的一条稳定事实", "episodes": [编号]}}],
-  "memes": ["从上面的片段里挑出真正是这个群特有说法的，没有就留空"]
+  "memes": ["从上面的片段里挑出真正是这个群特有说法的，没有就留空"]{goal_keys}{value_keys}
 }}
 注意：facts 是「你以后可以当众说出来的概括」，比如“ta 最近在折腾显卡”“ta 换过号”。
 不要把私聊里的原话、隐私细节、住址、密码之类写进 facts。
@@ -112,6 +125,21 @@ class NarrativeSelf:
         out["facts"] = kept
         # Only phrases she actually heard several people use; nothing invented
         out["memes"] = [m for m in result.get("memes") or [] if isinstance(m, str) and m in phrase_candidates]
+        v = result.get("value_reflection")
+        if values_text and isinstance(v, dict) and any(i in ids for i in v.get("episodes") or [] if isinstance(i, int)):
+            try:
+                out["value_reflection"] = {"value": str(v.get("value")), "direction": int(v.get("direction") or 0),
+                                           "why": str(v.get("why", ""))}
+            except (TypeError, ValueError):
+                pass
+        if goals_text is not None:
+            out["goal_review"] = [r for r in result.get("goal_review") or []
+                                  if isinstance(r, dict) and isinstance(r.get("id"), int)]
+            g = result.get("new_goal")
+            # A goal of her own must grow out of something that really happened
+            if isinstance(g, dict) and g.get("text") and any(i in ids for i in g.get("episodes") or []
+                                                              if isinstance(i, int)):
+                out["new_goal"] = g
         return out
 
     def drift_traits(self, eps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

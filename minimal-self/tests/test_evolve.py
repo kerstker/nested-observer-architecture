@@ -10,6 +10,8 @@ import sys
 import tempfile
 import unittest
 
+import asyncio
+
 from src.core.event_bus import EventBus
 from src.evaluation.scenarios import ScriptedLLM
 from src.levels.l10_consciousness.global_workspace import GlobalWorkspace
@@ -130,6 +132,75 @@ class TestBridgeEndToEnd(unittest.TestCase):
         with open(live_file, encoding="utf-8") as f:
             self.assertEqual(f.read(), before)
         self.assertEqual(len(bridge.list_proposals()), 1)
+
+
+class TestIntentToProposal(unittest.TestCase):
+    """A clear request from the creator must end in a proposal even when the chat model
+    only says "好，我去改" - the trigger is local, not left to the model's mood."""
+
+    class FakeBridge:
+        def __init__(self):
+            self.calls = []
+
+        def propose(self, task, requested_by="unknown", kind="self_evolution"):
+            self.calls.append(task)
+            return {"id": "p9", "status": "tested", "files_changed": 1, "added": 2, "removed": 0,
+                    "tests_total": 88, "tests_failed": 0}
+
+        def list_proposals(self, limit=20):
+            return [{"id": "p9", "status": "tested", "tests_total": 88, "tests_failed": 0}]
+
+    def _gw(self, reply="好啊"):
+        gw = GlobalWorkspace(EventBus(), ScriptedLLM(reply),
+                             db_path=os.path.join(tempfile.mkdtemp(prefix="noa_intent_"), "i.sqlite"))
+        gw.evolve_enabled = True
+        gw.evolve_agent = self.FakeBridge()
+        gw.evolve_creator = "creator"
+        return gw
+
+    def _run(self, gw, text, user="creator", group=None):
+        async def scenario():
+            reply = await gw.process_input(text, user_id=user, nickname="菜菜", group_id=group)
+            for _ in range(200):
+                if gw.output_queue:
+                    break
+                await asyncio.sleep(0.01)
+            return reply
+        return asyncio.run(scenario())
+
+    def test_intent_detection_is_narrow(self):
+        gw = self._gw()
+        self.assertTrue(gw._wants_to_evolve("把静音词的判断改成精确匹配"))
+        self.assertTrue(gw._wants_to_evolve("优化一下记忆整理"))
+        self.assertTrue(gw._wants_to_evolve("EVOLVE: 加个测试"))
+        self.assertFalse(gw._wants_to_evolve("改天再聊吧"))
+        self.assertFalse(gw._wants_to_evolve("今天天气不错"))
+        self.assertFalse(gw._wants_to_evolve("在吗"))
+
+    def test_explicit_request_runs_even_if_she_only_promises(self):
+        gw = self._gw("好，我去改")
+        self._run(gw, "把静音词的判断改成精确匹配")
+        self.assertEqual(gw.evolve_agent.calls, ["把静音词的判断改成精确匹配"])
+        self.assertIn("p9", gw.output_queue[-1]["content"])
+        self.assertEqual(gw.output_queue[-1]["target"], {"type": "private", "id": "creator"})
+
+    def test_group_and_strangers_cannot_trigger_it(self):
+        gw = self._gw()
+        self._run(gw, "把静音词的判断改成精确匹配", user="stranger")
+        self._run(gw, "把静音词的判断改成精确匹配", user="creator", group="G1")
+        self.assertEqual(gw.evolve_agent.calls, [])
+
+    def test_bang_command_bypasses_the_daily_gap(self):
+        gw = self._gw()
+        gw.last_evolve_time = __import__("time").time()
+        self._run(gw, "!evolve 把静音词的判断改成精确匹配")
+        self.assertEqual(gw.evolve_agent.calls, ["把静音词的判断改成精确匹配"])
+
+    def test_progress_is_remembered_as_experience(self):
+        gw = self._gw()
+        self._run(gw, "把静音词的判断改成精确匹配")
+        kinds = [e["kind"] for e in gw.episodes.recent(5)]
+        self.assertIn("evolution", kinds)
 
 
 if __name__ == "__main__":

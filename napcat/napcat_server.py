@@ -8,6 +8,7 @@ import hmac
 from .event_models import MessageEvent, VersionInfo
 from .security import verify_token, verify_signature
 from .message_utils import extract_plain_text
+from .qq import qq
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -61,6 +62,14 @@ class WebSocketManager:
 
 # 创建 WebSocket 管理器实例
 ws_manager = WebSocketManager()
+qq.manager = ws_manager
+
+# QQ 里不是消息的事件（戳一戳、撤回、进群、禁言、表情回应……）和请求（加好友、拉群）
+event_handler = None
+
+def register_event_handler(handler):
+    global event_handler
+    event_handler = handler
 
 def register_message_handler(handler):
     """注册消息处理器"""
@@ -96,6 +105,31 @@ def is_own_message(message_id: Any) -> bool:
 
 # 每条消息在自己的任务里处理：生成回复要好几秒，不能卡住 WebSocket 的接收循环
 _handler_tasks: Set[asyncio.Task] = set()
+
+def _dispatch_event(robot_id: str, data: Dict[str, Any]):
+    if not event_handler:
+        return
+    task = asyncio.create_task(event_handler(robot_id, data))
+    _handler_tasks.add(task)
+    task.add_done_callback(_handler_tasks.discard)
+
+def _handle_frame(robot_id: str, data: Dict[str, Any]):
+    """One frame from NapCat: an event to live through, or the answer to one of her API calls."""
+    if data.get("self_id"):
+        qq.self_id = str(data["self_id"])
+    if "post_type" in data:
+        if data["post_type"] == "message":
+            _dispatch(robot_id, MessageEvent(**data))
+        elif data["post_type"] in ("notice", "request"):
+            _dispatch_event(robot_id, data)
+        elif data.get("meta_event_type") == "lifecycle" and data.get("sub_type") == "connect":
+            _dispatch_event(robot_id, data)
+    elif "retcode" in data:
+        if not qq.resolve(data):
+            logger.info(f"Received API response: {data}")
+        _remember_sent(data)
+    else:
+        logger.warning(f"Received unknown data format: {data}")
 
 def _dispatch(robot_id: str, message_event: MessageEvent):
     if not message_handler:
@@ -275,18 +309,7 @@ async def websocket_endpoint(websocket: WebSocket, robot_id: str):
             else:
                 robots[robot_id]["last_message"] = data
             
-            # 处理消息事件
-            if "post_type" in data:
-                if data["post_type"] == "message":
-                    # 转换为 MessageEvent 对象，在独立任务里处理
-                    _dispatch(robot_id, MessageEvent(**data))
-            else:
-                # 可能是 API 响应
-                if "retcode" in data:
-                    logger.info(f"Received API response: {data}")
-                    _remember_sent(data)
-                else:
-                    logger.warning(f"Received unknown data format: {data}")
+            _handle_frame(robot_id, data)
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket, robot_id)
     except Exception as e:
@@ -316,18 +339,7 @@ async def websocket_webhook_endpoint(websocket: WebSocket, robot_id: str):
             else:
                 robots[robot_id]["last_message"] = data
             
-            # 处理消息事件
-            if "post_type" in data:
-                if data["post_type"] == "message":
-                    # 转换为 MessageEvent 对象，在独立任务里处理
-                    _dispatch(robot_id, MessageEvent(**data))
-            else:
-                # 可能是 API 响应
-                if "retcode" in data:
-                    logger.info(f"Received API response: {data}")
-                    _remember_sent(data)
-                else:
-                    logger.warning(f"Received unknown data format: {data}")
+            _handle_frame(robot_id, data)
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket, robot_id)
     except Exception as e:

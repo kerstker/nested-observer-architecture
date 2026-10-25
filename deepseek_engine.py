@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import os
@@ -21,7 +22,12 @@ class DeepSeekEngine:
     - 关闭思考模式：思考模式下 temperature 会被忽略（Noa 的"激动程度 -> 温度"就失效了），
       而且推理过程会占掉本来就很短的 max_tokens
     - API Key 只从环境变量 DEEPSEEK_API_KEY 读取，不写进 config.json
+    - media=...：图片跟着这轮对话一起交给模型看（不是先转成一句文字描述），
+      图片作为最后一个 user 轮里的 image_url 内容块；模型上下文里只有文字的部分保持不变
     """
+
+    # 模型能直接看图（app 据此决定"把图交给她"；不能看图的引擎只会知道"来了张图"）
+    supports_images = True
 
     def __init__(self, api_key: str = None, model: str = "deepseek-flash",
                  base_url: str = "https://api.deepseek.com", timeout: float = 60.0,
@@ -74,11 +80,35 @@ class DeepSeekEngine:
     def _wants_json(prompt: str) -> bool:
         return "Output JSON" in prompt or "输出 JSON" in prompt
 
-    def generate_json(self, prompt: str, max_tokens: int = 200, temperature: float = 0.7) -> Dict[str, Any]:
+    @staticmethod
+    def with_media(messages: List[Dict[str, Any]], media: Optional[List[Dict[str, Any]]],
+                   limit: int = 3) -> List[Dict[str, Any]]:
+        """把图片放进最后一个 user 轮：她读这条消息时，图就在眼前。
+
+        media: [{"data": bytes, "mime": "image/jpeg"}, ...]
+        没有可用的图片时原样返回，消息仍是纯文本（旧行为不变）。
+        """
+        pictures = [m for m in (media or []) if m.get("data")][:limit]
+        if not pictures:
+            return messages
+        target = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+        if target is None:
+            return messages
+        parts: List[Dict[str, Any]] = [{"type": "text", "text": target["content"]}]
+        for picture in pictures:
+            b64 = base64.b64encode(picture["data"]).decode("ascii")
+            mime = picture.get("mime") or "image/jpeg"
+            parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+        target["content"] = parts
+        return messages
+
+    def generate_json(self, prompt: str, max_tokens: int = 200, temperature: float = 0.7,
+                      media: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         wants_json = self._wants_json(prompt)
+        messages = self.with_media(self.chatml_to_messages(prompt), media)
         body = {
             "model": self.model,
-            "messages": self.chatml_to_messages(prompt),
+            "messages": messages,
             "max_tokens": max(max_tokens, 800) if wants_json else max_tokens,   # JSON 被截断就无法解析
             "temperature": temperature,
             "thinking": {"type": "disabled"},

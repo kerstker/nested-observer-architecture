@@ -27,9 +27,11 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
+from . import fitness
+
 logger = logging.getLogger(__name__)
 
-SKIP_DIRS = {".git", "__pycache__", "node_modules", "models", ".trae", "data", ".idea", ".venv"}
+SKIP_DIRS = {".git", "__pycache__", "node_modules", "models", ".trae", "data", ".idea", ".venv", ".venv-lora"}
 SKIP_SUFFIXES = (".sqlite", ".sqlite3", ".pyc", ".log", ".gguf", ".jpg", ".png")
 
 DEFAULT_DSH_EXE = r"C:\path\to\DeepSeek Harness.exe"
@@ -108,7 +110,8 @@ def _runs_ok(text: str) -> Dict[str, int]:
 
 class DshAgentBridge:
     def __init__(self, repo_root: str, data_dir: str = None, dsh_exe: str = None, dsh_bin: str = None,
-                 timeout: float = 1200.0, max_patch_lines: int = 300, max_per_day: int = 1):
+                 timeout: float = 1200.0, max_patch_lines: int = 300, max_per_day: int = 1,
+                 fitness_seeds: tuple = (0, 1, 2)):
         self.repo_root = os.path.abspath(repo_root)
         self.data_dir = data_dir or os.path.join(self.repo_root, "data", "evolution")
         self.dsh_exe = dsh_exe or os.environ.get("DSH_EXE") or DEFAULT_DSH_EXE
@@ -116,6 +119,7 @@ class DshAgentBridge:
         self.timeout = timeout
         self.max_patch_lines = max_patch_lines
         self.max_per_day = max_per_day
+        self.fitness_seeds = tuple(fitness_seeds or ())   # empty: tests only, no behavioural fitness
         os.makedirs(self.data_dir, exist_ok=True)
         self._init_db()
 
@@ -313,8 +317,14 @@ class DshAgentBridge:
         return {"total": total, "failed": failed, "log": out[-6000:]}
 
     # ------------------------------------------------------------------ public API
-    def propose(self, task: str, requested_by: str = "unknown", kind: str = "self_evolution") -> Dict[str, Any]:
-        """Make a proposal. Never raises; returns a status dict that is also stored in the DB."""
+    def propose(self, task: str, requested_by: str = "unknown", kind: str = "self_evolution",
+                target_metric: str = None) -> Dict[str, Any]:
+        """
+        Make a proposal. Never raises; returns a status dict that is also stored in the DB.
+        With fitness seeds, the behavioural evaluation runs on the unchanged copy first and on the
+        changed copy after the tests pass; a change that makes her behaviour worse is rejected here,
+        before anyone is asked to approve it.
+        """
         pid = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
         prop_dir = os.path.join(self.data_dir, pid)
         workspace = os.path.join(prop_dir, "workspace")
@@ -339,6 +349,8 @@ class DshAgentBridge:
 
             with open(os.path.join(prop_dir, "task.md"), "w", encoding="utf-8") as f:
                 f.write(f"requested_by: {requested_by}\n\n{task}\n")
+            baseline = (fitness.evaluate(workspace, self.fitness_seeds)
+                        if self.fitness_seeds and fitness.available(workspace) else None)
 
             agent = self._call_agent(workspace, TASK_PREAMBLE + task + "\n")
             result["session_id"] = agent["session_id"]
@@ -361,7 +373,14 @@ class DshAgentBridge:
                 tests = self._run_tests(workspace)
                 result.update(tests_total=tests["total"], tests_failed=tests["failed"],
                               tests_log=tests["log"])
-                result["status"] = "tested" if tests["failed"] == 0 else "tests_failed"
+                result["status"] = "tested" if tests["failed"] == 0 and tests["total"] > 0 else "tests_failed"
+                if result["status"] == "tested" and baseline is not None:
+                    after = fitness.evaluate(workspace, self.fitness_seeds)
+                    verdict = fitness.compare(baseline, after, target_metric)
+                    result.update(fitness=verdict["summary"], verdict=verdict["verdict"],
+                                  target_metric=target_metric, fitness_changes=verdict["changes"])
+                    if verdict["verdict"] == "worse":
+                        result["status"] = "rejected_fitness"
         except Exception as e:
             logger.error(f"[Evolve] {pid} failed: {e}")
             result["status"] = "error"
@@ -395,6 +414,8 @@ class DshAgentBridge:
             conn.close()
         if not row:
             return {"ok": False, "error": "没有这个提案"}
+        if row["status"] != "tested":
+            return {"ok": False, "error": f"这份提案的状态是 {row['status']}，只有测试和评估都通过的提案才能应用"}
         if not row["patch_path"] or not os.path.exists(row["patch_path"]):
             return {"ok": False, "error": "提案没有补丁文件"}
         check = subprocess.run(["git", "apply", "--check", row["patch_path"]], cwd=self.repo_root,

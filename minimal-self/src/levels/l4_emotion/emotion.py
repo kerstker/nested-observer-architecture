@@ -22,6 +22,8 @@ class EmotionEngine:
         # Emotions return to neutral with time: each one halves every `half_life_seconds`.
         self.half_life_seconds = half_life_seconds
         self.last_decay = clock.now()
+        # Temperament: the resting point emotions return to (set from personality; zero = neutral)
+        self.baseline: Dict[str, float] = {}
 
     def update(self, delta: EmotionState):
         for f in fields(EmotionState):
@@ -29,13 +31,14 @@ class EmotionEngine:
             setattr(self.state, f.name, max(0.0, min(1.0, value)))
 
     def decay(self, now: float = None):
-        """Exponential decay toward neutral, proportional to wall-clock time since the last call."""
+        """Exponential return toward her temperament (baseline), proportional to time since the last call."""
         now = clock.now() if now is None else now
         elapsed = max(0.0, now - self.last_decay)
         self.last_decay = now
         factor = 0.5 ** (elapsed / self.half_life_seconds)
         for f in fields(EmotionState):
-            setattr(self.state, f.name, getattr(self.state, f.name) * factor)
+            base = self.baseline.get(f.name, 0.0)
+            setattr(self.state, f.name, base + (getattr(self.state, f.name) - base) * factor)
 
     def valence(self) -> float:
         """Pleasantness in [-1, 1]: joy against the strongest negative emotion."""

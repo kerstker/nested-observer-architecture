@@ -63,9 +63,9 @@ class TestStickers(unittest.TestCase):
         gw = make_gw("哈哈哈\n[表情:1]")
         # A sticker-only message: she perceives it, and learns it from what was just said
         gw.last_said["u:u1"] = "我今天把蛋糕烤糊了"
-        self.assertTrue(hear(gw, "", stickers=[sticker()]))
-        self.assertIn("发了一个表情", gw.inference_engine.calls[-1]["prompt"])
+        hear(gw, "", stickers=[sticker()])          # she may or may not answer a bare sticker; she keeps it
         self.assertEqual(gw.stickers.stats()["count"], 1)
+        self.assertEqual(gw.stickers.stats()["top"][0]["contexts"], ["我今天把蛋糕烤糊了"])
         # Next time a similar moment comes, it is offered to her and she can send it
         reply = hear(gw, "我也把蛋糕烤糊了哈哈")
         self.assertIn("[表情:1]", gw.inference_engine.last_prompt())

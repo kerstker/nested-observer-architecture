@@ -122,6 +122,21 @@ class TestNoEndlessLoops(unittest.TestCase):
             c.advance(60)
         self.assertEqual(got, [True, True, True, False, False])
 
+    def test_zero_means_no_limit_for_people_but_bots_stay_limited(self):
+        gw = make_gw("哈哈")
+        gw.max_group_messages_per_hour = 0
+        gw.max_replies_per_person_5min = 0
+        gw.max_interjections_per_hour = 0
+        c = clock.get_clock()
+        replied = 0
+        for i in range(60):                              # a very lively hour: everyone keeps talking to her
+            replied += bool(hear(gw, f"乃爱乃爱，第{i}个问题是关于{i * 7 % 13}号话题的", user=f"p{i % 5}", group="G"))
+            c.advance(20)
+        self.assertEqual(replied, 60)
+        gw.user_models.get("botB")["seems_bot"] = True    # ...but a bot still cannot drag her into a loop
+        bot = [bool(hear(gw, "@乃爱 收到！", user="botB", group="G")) for _ in range(6)]
+        self.assertEqual(bot.count(True), gw.max_replies_to_botlike_10min)
+
     def test_her_name_is_not_a_personal_fact(self):
         gw = make_gw("在呢")
         hear(gw, "@乃爱 在吗")

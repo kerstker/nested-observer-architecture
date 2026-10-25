@@ -242,7 +242,9 @@ global_workspace.idle_thought_interval = config.get('IDLE_THOUGHT_INTERVAL', 60)
 global_workspace.autonomous_groups = {str(g) for g in config.get('AUTONOMOUS_GROUPS', [])}
 global_workspace.max_interjections_per_hour = config.get('MAX_INTERJECTIONS_PER_HOUR', 2)
 # 硬性上限：不管她怎么选，都保证不会和谁没完没了地聊下去
-global_workspace.max_group_messages_per_hour = config.get('MAX_GROUP_MESSAGES_PER_HOUR', 12)
+global_workspace.max_group_messages_per_hour = config.get('MAX_GROUP_MESSAGES_PER_HOUR', 30)
+global_workspace.max_replies_per_person_5min = config.get('MAX_REPLIES_PER_PERSON_5MIN', 20)
+# 上面三个设成 0 就是不限制；对"像机器人的对象"的限制始终保留，否则会和别的机器人没完没了
 global_workspace.bot_accounts = {str(u) for u in config.get('BOT_ACCOUNTS', [])}   # 其他机器人：只听不回
 
 # Level 17：改造自己的通道。默认关闭；只对创造者私聊和控制台开放；提案不会自动生效。

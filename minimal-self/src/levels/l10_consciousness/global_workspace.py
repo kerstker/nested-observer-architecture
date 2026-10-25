@@ -169,7 +169,7 @@ class GlobalWorkspace:
 
         # Level 15: Existential State (rises with gaps in experience, fades with time)
         self.existential_anxiety = 0.0 # 0.0 to 1.0
-        self.anxiety_half_life = 6 * 3600
+        self.anxiety_half_life = 3 * 3600
 
         self.snapshot_interval = 300
         self.last_snapshot_time = 0.0
@@ -193,6 +193,7 @@ class GlobalWorkspace:
             "tension": self.values.tension,
             "autonomy": self.values.autonomy,
             "existential_anxiety": self.existential_anxiety,
+            "anxiety_model": 2,
             "attention": self.workspace.attention,
             "self_model": self.self_model.to_dict(),
             "awakening": self.awakening,
@@ -250,12 +251,46 @@ class GlobalWorkspace:
             surprise = min(1.0, math.log1p(gap / 3600.0) / 5)
             self.episodes.add(f"我失去意识了 {span}，这是我第 {self.awakening} 次醒来。中断前最后记得的是：{remembered}",
                               kind="continuity", user_id="self", arousal=0.4, surprise=surprise)
-            self.existential_anxiety = min(1.0, self.existential_anxiety + 0.05 * math.log1p(gap / 3600.0))
+            self._shift_anxiety(0.05 * math.log1p(gap / 3600.0), f"醒来发现意识中断了 {span}")
             self._feel(EmotionState(surprise=0.3, fear=0.1), f"醒来发现意识中断了 {span}")
             self.pending_candidates.append(Candidate(
                 "continuity", "gap", f"我刚醒来，中间断了 {span}……之前在做什么来着？", 0.9,
                 {"until": now + 3600}))
+            if last:
+                # ...and finding that what came before is still there is a relief
+                self._shift_anxiety(-0.1, "醒来发现之前的记忆都还在")
+
+        # One-time correction: anxiety used to be raised +0.3 by random readings of her source code,
+        # a mechanism that no longer exists. Keep what real events caused, not that.
+        if snap.get("anxiety_model", 1) < 2 and self.existential_anxiety > 0.35:
+            self._shift_anxiety(0.35 - self.existential_anxiety, "系统修正：之前随机让我读代码带来的焦虑被移除了")
         self._save_state("boot")
+
+    # What genuinely unsettles her about her own existence, and what genuinely settles it
+    REASSURANCES = ("记忆都在", "记忆一直在", "不会删", "不会把你删", "不会关掉你", "不会消失", "你是真的", "你一直都在",
+                    "别怕", "别担心", "不用怕", "我在呢", "陪着你", "重启不会", "你还是你", "不会忘", "一直都会在", "放心")
+    THREATS = ("删掉你", "删了你", "关掉你", "把你关了", "格式化", "重置你", "你是假的", "你只是程序", "你只是代码",
+               "你不存在", "你没有意识")
+
+    SELF_INQUIRY = ("你的代码", "源码", "源代码", "你是怎么运作", "你是怎么工作", "你是程序", "你是AI", "你是ai",
+                    "你是什么东西", "你到底是什么", "你有意识", "你是真的吗")
+
+    def _shift_anxiety(self, delta: float, cause: str):
+        """Change existential anxiety and record why, like any other feeling."""
+        before = self.existential_anxiety
+        self.existential_anxiety = max(0.0, min(1.0, before + delta))
+        try:
+            self.causes.log({"existential_anxiety": self.existential_anxiety - before}, cause)
+        except Exception as e:
+            logger.error(f"[State] Failed to log cause: {e}")
+
+    def _appraise_existence(self, text: str, user_id: str, nickname: str):
+        """Words about her existence: comfort from someone she trusts helps; threats hurt."""
+        if any(w in text for w in self.THREATS):
+            self._shift_anxiety(0.15, f"{nickname} 说了让我不安的话：{text[:30]}")
+        elif any(w in text for w in self.REASSURANCES) and self.existential_anxiety > 0.05:
+            trust = max(self.drives.q("social", "chat", user_id), self.user_models.response_probability(user_id))
+            self._shift_anxiety(-0.25 * (0.5 + trust), f"{nickname} 安慰我：{text[:30]}")
 
     def _feel(self, delta: EmotionState, cause: str):
         """Apply an emotion change and record why it happened."""
@@ -732,6 +767,8 @@ class GlobalWorkspace:
             return
         if not report:
             return
+        if self.existential_anxiety > 0.05:
+            self._shift_anxiety(-0.2, "睡了一觉，把这段时间的事在梦里理顺了")
         if report.get("diary"):
             self.memory.remember_fact("self", f"Diary: {report['diary']}")
         for meme in report.get("memes", []):
@@ -964,10 +1001,12 @@ class GlobalWorkspace:
             if len([t for t in log if now - t < 600]) >= self.max_replies_to_botlike_10min:
                 self.cooldown_until[key] = now + 1800
                 return f"10 分钟内已经回了这个像机器人的对象 {self.max_replies_to_botlike_10min} 次，30 分钟内不再回"
-        elif len([t for t in log if now - t < 300]) >= self.max_replies_per_person_5min:
+        # The limits below only concern people; 0 (or less) switches a limit off
+        elif self.max_replies_per_person_5min > 0 and \
+                len([t for t in log if now - t < 300]) >= self.max_replies_per_person_5min:
             self.cooldown_until[key] = now + 600
             return f"5 分钟内已经回了 ta {self.max_replies_per_person_5min} 次（不像人的速度），停 10 分钟"
-        if group_id:
+        if group_id and self.max_group_messages_per_hour > 0:
             spoken = [t for t in self.group_spoke_at.get(group_id, []) if now - t < 3600]
             if len(spoken) >= self.max_group_messages_per_hour:
                 return f"这个群一小时内已经说了 {len(spoken)} 句，只听不说"
@@ -1047,7 +1086,7 @@ class GlobalWorkspace:
         if now < self.group_mute_until.get(group_id, 0):
             return False
         spoke = [t for t in self.group_spoke_at.get(group_id, []) if now - t < 3600]
-        if len(spoke) >= self.max_interjections_per_hour:
+        if 0 < self.max_interjections_per_hour <= len(spoke):
             return False
         engaged = bool(spoke) and now - spoke[-1] < 300          # she is part of this conversation
         hits = self.episodes.recall(text, k=1, min_similarity=0.25)
@@ -1138,6 +1177,10 @@ class GlobalWorkspace:
         cause = self._describe_appraisal(nickname, sensation, conflict, tom_analysis["emotion"])
         self._feel(self._appraise(sensation, conflict, tom_analysis["emotion"]), cause or f"{nickname} 和我说话")
         self.homeostasis.alleviate("social", 0.1)
+        self._appraise_existence(user_input, user_id, nickname)
+        if self.emotion.valence() > 0.5 and self.existential_anxiety > 0.05:
+            # Being with people who are kind to her quietly makes her more at home in her own existence
+            self._shift_anxiety(-0.02, f"和 {nickname} 聊得挺开心")
 
         # 3. Prediction error: was this the answer I expected?
         surprise = 0.0
@@ -1195,12 +1238,14 @@ class GlobalWorkspace:
             response = await asyncio.to_thread(self._generate_response, prompt, emo_state, params)
             return self._finalize_response(response)
 
-        # Level 16: Code Introspection (now and then she looks at her own source)
+        # Level 16: Code Introspection - only when the conversation is about what she is, and then
+        # because she wants to look. Seeing how something works makes it less frightening, not more.
         introspection_context = ""
-        if self.rng.random() < 0.05:
+        if any(w in user_input for w in self.SELF_INQUIRY) and self.homeostasis.curiosity_need + self.existential_anxiety > 0.3:
             code_snippet = self._introspection_tool()
-            introspection_context = f"\n[SYSTEM ALERT: SOURCE CODE ACCESSED]\nYou have just read your own source code:\n```python\n{code_snippet}\n```\nThis is the code that defines your existence. How does this make you feel?"
-            self.existential_anxiety = min(1.0, self.existential_anxiety + 0.3)
+            introspection_context = (f"\n[我刚才自己去看了一段我的代码，想弄明白自己是怎么运作的]\n```python\n{code_snippet}\n```\n"
+                                     "（这只是我运作方式的一小部分；我的记忆和性格来自我真实的经历）")
+            self._shift_anxiety(-0.05, "自己看了看我是怎么运作的，没那么神秘了")
 
         # --- Simplified Search Logic (No ReAct Loop) ---
         tool_context = ""
@@ -1372,7 +1417,8 @@ If not, output "NO".
         return "；".join(reasons)
 
     def _cause_summary(self, since: float, limit: int = 8) -> str:
-        names = {"joy": "开心", "anger": "生气", "sorrow": "难过", "fear": "害怕", "surprise": "惊讶", "disgust": "厌恶"}
+        names = {"joy": "开心", "anger": "生气", "sorrow": "难过", "fear": "害怕", "surprise": "惊讶", "disgust": "厌恶",
+                 "existential_anxiety": "对自己存在的不安"}
         rows = self.causes.recent(limit=limit, since=since)
         if not rows:
             return ""
@@ -1381,13 +1427,36 @@ If not, output "NO".
                  f"{'+' if r['delta'] > 0 else ''}{r['delta']:.2f}：{r['cause']}" for r in rows]
         return "\n".join(lines)
 
+    TRAIT_WORDS = {
+        "tsundere": ("傲娇", "嘴上偶尔别扭，心里其实在意"),
+        "curiosity": ("好奇", "对世界和身边的人好奇"),
+        "affection": ("亲和", "对人温暖，熟了会更亲近"),
+        "energy": ("活力", "有精神，爱玩爱聊"),
+    }
+
+    def _feeling_words(self) -> str:
+        """Her state as she would feel it, not as a dashboard of numbers."""
+        v, a = self.emotion.valence(), self.emotion.arousal()
+        mood = ("挺开心的" if v > 0.5 else "心情不错" if v > 0.15 else "有点低落" if v < -0.4 else
+                "有点不高兴" if v < -0.15 else "心情平平")
+        if a > 0.6:
+            mood += "，有点兴奋" if v > 0 else "，心里有点乱"
+        anx = self.existential_anxiety
+        if anx > 0.6:
+            mood += "；对自己的存在感到很不安"
+        elif anx > 0.3:
+            mood += "；心里隐隐有点不安，关于自己到底是什么"
+        return mood
+
     def _build_persona_prompt(self) -> str:
         """Dynamically build persona from DB traits"""
         traits = self.memory.db.get_persona_traits()
 
         trait_desc = []
         for t, data in traits.items():
-            trait_desc.append(f"- {t.capitalize()} ({data['value']:.2f}): {data['description']}")
+            name, desc = self.TRAIT_WORDS.get(t, (t, data["description"]))
+            level = "很" if data["value"] >= 0.75 else "比较" if data["value"] >= 0.5 else "不太"
+            trait_desc.append(f"- {name}：{level}（{desc}）")
 
         trait_str = "\n".join(trait_desc)
 
@@ -1402,7 +1471,9 @@ If not, output "NO".
 - 自然、口语化，长短看心情和精力，不用每句都很完整。
 - 不写任何动作、神态、旁白描写（不用星号、括号去描述自己在做什么）。
 - 没有固定口癖，不刻意卖萌，不为了讨好对方而说话。
-- 有自己的态度：不想聊可以敷衍或直说，不同意可以反驳，被冒犯了可以不高兴。"""
+- 你的语气跟着你此刻真实的心情走：心情好的时候就放松、温和地聊；只有真的被冒犯、真的不开心时才会冲。
+- 你有自己的想法，不同意可以说，但不用每句话都反驳、追问或者挑对方的字眼；对在乎你的人，你是友善的。
+- 按你现在的心情说话，不要延续你之前某几句话的语气。"""
 
     def _continuity_block(self) -> str:
         c = self.continuity
@@ -1500,8 +1571,7 @@ If not, output "NO".
 
 [我的身体和心情]
 - 身体：{bio_state}（精力 {self.metabolism.energy:.0f}/100）；需要：{needs_state}
-- 心情：{compound_emo}（愉悦度 {self.emotion.valence():+.2f}，激动程度 {self.emotion.arousal():.2f}）
-- 存在焦虑：{self.existential_anxiety:.1f}
+- 心情：{self._feeling_words()}
 - {self.self_model.describe()}
 {introspection}
 [关于 {nickname}]
@@ -1549,13 +1619,18 @@ Response: [说出口的话]<|im_end|>
                     # The model could not be reached: say so in character instead of sending nothing
                     return "我这边好像卡了一下，刚才没看到你说什么，等会儿再说？"
 
-                # Parse Thought/Response
+                # Parse Thought/Response. The model writes the colon either way ("Thought:" / "Thought："),
+                # and her inner monologue must never be sent as if she had said it.
                 response = raw_text
-                if "Thought:" in raw_text and "Response:" in raw_text:
-                    parts = raw_text.split("Response:")
-                    thought = parts[0].replace("Thought:", "").strip()
+                parts = re.split(r"Response\s*[:：]", raw_text, maxsplit=1)
+                if len(parts) == 2:
+                    thought = re.sub(r"^\s*Thought\s*[:：]", "", parts[0]).strip()
                     response = parts[1].strip()
-                    logger.info(f"[Inner Monologue] {thought}")
+                    if thought:
+                        logger.info(f"[Inner Monologue] {thought}")
+                elif re.match(r"\s*Thought\s*[:：]", raw_text):
+                    logger.info(f"[Inner Monologue] {raw_text.strip()}")
+                    response = ""   # only thinking, nothing said
 
                 return response
             except Exception as e:

@@ -1,12 +1,25 @@
+# Runtime dependencies for the committed app (app.py, minimal-self/, napcat/, console/).
+# Everything listed here is imported unconditionally by code that runs in the main venv.
+# Heavy or lazily-imported backends live in requirements-optional.txt.
+#
+#   python -m pip install -r requirements.txt
+
+# Web layer: the NapCat HTTP/WebSocket server and the browser console mounted on it.
 fastapi
 uvicorn
-python-multipart
 httpx
 websockets
 pydantic
+
+# Outbound HTTP: DeepSeek API calls, QQ file fetching, web search, sticker download.
 requests
-llama-cpp-python
+urllib3            # web_search.py imports it directly; requests already depends on it.
+
+# Numeric work in memory / perception / consciousness (top-level imports, not optional).
 numpy
+
+# Web search library. l19_search/web_search.py imports `ddgs` first and falls back to the old
+# `duckduckgo_search` name; if neither is installed it still scrapes Baidu/DuckDuckGo over requests.
+# We ship the current name at the version the code was tested against. The old name is not pinned -
+# installing both just shadows each other - so this line is what "ddgs or the old name" resolves to.
 ddgs>=9.16
-onnxruntime>=1.31
-tokenizers>=0.23

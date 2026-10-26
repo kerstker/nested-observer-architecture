@@ -1,0 +1,31 @@
+# Optional backends. The app imports each of these lazily and degrades gracefully when the package
+# is absent (see the comment by each group). Install the whole file only if you want every feature:
+#
+#   python -m pip install -r requirements-optional.txt
+#
+# None of it is needed for the online DeepSeek-backed setup, and none of it is needed by the tests.
+
+# Local GGUF model: inference.py does `from llama_cpp import Llama` inside _load_model, only when
+# LLM_MODEL_PATH (config.json) points at a .gguf file. It needs a C++ toolchain or a prebuilt wheel,
+# which is why CI never installs it.
+llama-cpp-python
+
+# Memory embeddings: l2_memory/embedding.py imports these lazily when a BAAI/bge-small-zh-v1.5 ONNX
+# export is present (models/<name>/onnx/model.onnx + tokenizer.json). Without them recall falls back
+# to hashed character n-grams - worse on paraphrases, but nothing breaks.
+onnxruntime>=1.31
+tokenizers>=0.23
+
+# Reading PDFs: l1_perception/documents.py imports pypdf lazily in _pdf(), so only PDF documents
+# need it. The other document types are parsed with the standard library.
+pypdf
+
+# Pictures: stickers (l1_perception/stickers.py), the Minecraft view (l8_agency/game.py) and
+# outgoing QQ images (napcat/senses.py) import Pillow lazily; without it those paths skip the
+# image work instead of crashing.
+Pillow
+
+# NOT listed here on purpose: her own model (training/serving) and her hearing. Both run in a
+# separate venv (`.venv-lora`) because torch is huge and pinned to a CUDA build:
+# scripts/lora/setup_env.ps1 and scripts/senses/setup_senses.ps1 install
+# torch / transformers / peft / soundfile there.

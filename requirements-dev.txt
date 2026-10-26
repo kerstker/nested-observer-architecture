@@ -1,0 +1,20 @@
+# Development / test dependencies. The suite is unittest-style but run with pytest:
+#
+#   cd minimal-self
+#   python -m pytest -q
+#
+# pytest is only a runner here: the tests are plain unittest.TestCase, so this also works without
+# pytest installed:  python -m unittest discover -s tests   (from minimal-self; tests/ is not a package).
+# This is exactly what CI installs (.github/workflows/tests.yml), one command:
+#
+#   python -m pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+pytest>=7.4
+
+# Test-only needs that are optional at runtime (kept here so one install is enough for the suite):
+#   tests/test_game.py imports Pillow for the screenshot-shrink size check
+#   tests/test_documents.py needs pypdf for the PDF extraction test
+Pillow
+pypdf

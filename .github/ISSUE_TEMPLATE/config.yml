@@ -1,0 +1,14 @@
+# Only the bug template is defined. Blank issues stay enabled so feature requests / questions
+# still have a place; add a feature_request.md when the project wants a stricter form.
+blank_issues_enabled: true
+
+# 发布到公开仓库后，可以在这里加上安全报告和讨论区的入口（把 <owner>/<repo> 换成实际地址）：
+# Once the repository is public, add private-security and discussion links here, replacing
+# <owner>/<repo> with the real address:
+# contact_links:
+#   - name: 安全问题 / Security
+#     url: https://github.com/<owner>/<repo>/security/policy
+#     about: 请私下报告漏洞，不要公开 / Report vulnerabilities privately
+#   - name: 讨论 / Discussions
+#     url: https://github.com/<owner>/<repo>/discussions
+#     about: 提问和想法 / Questions and ideas

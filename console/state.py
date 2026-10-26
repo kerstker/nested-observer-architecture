@@ -95,6 +95,7 @@ def snapshot(gw) -> Dict[str, Any]:
         "abilities": gw.abilities,
         "evolve": {"enabled": bool(gw.evolve_enabled), "in_progress": gw.evolve_in_progress,
                    "last": gw.last_evolve_result},
+        "outside": {"enabled": gw.mcp is not None, "wandering": gw.wandering, "wander": dict(gw.wander)},
         "llm_calls": len(gw.llm_trace),
         "last_monologue": gw.monologues[-1] if gw.monologues else None,
         "inbox": list(getattr(gw, "console_inbox", [])),

@@ -42,6 +42,10 @@ class MaintainerReply(BaseModel):
     status: str
     note: str = ""
 
+class OutsideRequest(BaseModel):
+    wander_enabled: Optional[bool] = None
+    per_day: Optional[int] = None
+
 class SettingsRequest(BaseModel):
     idle_thought_interval: Optional[float] = None
     autonomous_groups: Optional[list] = None
@@ -287,6 +291,33 @@ def create_console_router(gw, token: str = None) -> APIRouter:
         if not ok:
             raise HTTPException(404, "没有这个请求")
         return json_response({"ok": True})
+
+    # Hands outside the house: the MCP servers she can use (a browser, ...), and her own time on the web.
+    # Who may use which tool is decided in l8_agency/access.py; this only shows it and holds the switch.
+    @router.get("/api/outside")
+    async def outside_state(request: Request):
+        authorize(request)
+        hub = getattr(gw, "mcp", None)
+        if hub is None:
+            return json_response({"enabled": False, "hint": "config.json 里设置 MCP_ENABLED=true 后重启才会开启"})
+        from src.levels.l8_agency import access
+        tools = hub.tools()
+        return json_response({
+            "enabled": True, "servers": hub.status(), "tools": [
+                {"server": t["server"], "name": t["name"], "description": t["description"][:100],
+                 "tiers": [tier for tier in (access.OWNER, access.TRUSTED, access.AUTONOMOUS)
+                           if access.allowed(hub.config.get(t["server"], {}), tier, t["name"])]} for t in tools],
+            "trusted": list(gw.mcp_trusted), "wander": dict(gw.wander), "wandering": gw.wandering,
+            "journal": gw.wander_log[:10]})
+
+    @router.post("/api/outside")
+    async def outside_set(body: OutsideRequest, request: Request):
+        authorize(request)
+        if body.wander_enabled is not None:
+            gw.wander["enabled"] = bool(body.wander_enabled)
+        if body.per_day is not None:
+            gw.wander["per_day"] = max(0, min(12, int(body.per_day)))
+        return json_response({"wander": dict(gw.wander)})
 
     @router.post("/api/evolve")
     async def evolve_submit(body: EvolveRequest, request: Request):

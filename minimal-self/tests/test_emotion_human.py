@@ -23,6 +23,7 @@ def db_path():
 class TestEngine(unittest.TestCase):
     def setUp(self):
         clock.set_clock(SimClock(START))
+        self.addCleanup(clock.set_clock, clock.Clock())
         self.eng = EmotionEngine()
 
     def test_good_news_takes_the_edge_off_sorrow_and_bad_news_dims_joy(self):
@@ -92,6 +93,7 @@ class TestEngine(unittest.TestCase):
 class TestInHerLife(unittest.TestCase):
     def setUp(self):
         clock.set_clock(SimClock(START + 2 * HOUR))
+        self.addCleanup(clock.set_clock, clock.Clock())
         self.gw = GlobalWorkspace(EventBus(), ScriptedLLM("嗯"), db_path=db_path(), rng=random.Random(0))
 
     def say(self, text, user="u1", name="小明"):

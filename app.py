@@ -303,6 +303,34 @@ if config.get('EVOLVE_ENABLED'):
     except Exception as e:
         logger.error(f"[Evolve] 初始化失败，改造通道保持关闭：{e}")
 
+# Level 8: hands outside the house - a real browser (and any other MCP server) she can use. Who may use it is
+# decided in src/levels/l8_agency/access.py; in her own free time she may also go and look at things herself.
+if config.get('MCP_ENABLED'):
+    try:
+        from src.levels.l8_agency.mcp import McpHub
+        from src.levels.l8_agency.access import DEFAULT_SERVERS
+        root_dir = os.path.dirname(os.path.abspath(__file__))
+        servers = {}
+        for name, c in (config.get('MCP_SERVERS') or DEFAULT_SERVERS).items():
+            c = dict(c)
+            if c.get("cwd"):
+                c["cwd"] = c["cwd"] if os.path.isabs(c["cwd"]) else os.path.join(root_dir, c["cwd"])
+                os.makedirs(c["cwd"], exist_ok=True)
+            servers[name] = c
+        hub = McpHub(servers, root_dir)
+        hub.start_all()
+        global_workspace.mcp = hub
+        global_workspace.mcp_trusted = tuple(str(u) for u in (config.get('MCP_TRUSTED_USERS') or []))
+        global_workspace.wander.update({
+            "enabled": bool(config.get('WANDER_ENABLED', False)),
+            "per_day": int(config.get('WANDER_PER_DAY', 3)),
+            "steps": int(config.get('WANDER_STEPS', 10)),
+            "gap": float(config.get('WANDER_GAP_MINUTES', 120)) * 60,
+        })
+        logger.info(f"[MCP] 外部工具已开启：{', '.join(servers)}；自己上网逛：{'开' if global_workspace.wander['enabled'] else '关'}")
+    except Exception as e:
+        logger.error(f"[MCP] 初始化失败，外部工具保持关闭：{e}")
+
 group_analyzer = RealTimeGroupRelationAnalyzer(global_workspace.memory.db)
 
 # 控制台：http://127.0.0.1:8080/console（没设 CONSOLE_TOKEN 时只允许本机访问）
@@ -802,6 +830,8 @@ async def shutdown_handler():
 
     # Persist the whole self first, so the next start-up resumes instead of resetting
     global_workspace._save_state("shutdown")
+    if getattr(global_workspace, "mcp", None):
+        global_workspace.mcp.stop_all()
     global_workspace.memory.flush()
     if hasattr(global_workspace.inference_engine, "usage_summary"):
         logger.info(f"[DeepSeek] 本次运行用量：{global_workspace.inference_engine.usage_summary()}")

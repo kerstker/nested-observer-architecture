@@ -24,6 +24,7 @@ def db_path():
 class TestChannel(unittest.TestCase):
     def setUp(self):
         clock.set_clock(SimClock(START))
+        self.addCleanup(clock.set_clock, clock.Clock())
         self.m = Maintainer(db_path())
 
     def test_a_request_is_filed_and_the_same_one_is_not_filed_twice(self):
@@ -69,6 +70,7 @@ class TestChannel(unittest.TestCase):
 class TestInHerLife(unittest.TestCase):
     def setUp(self):
         clock.set_clock(SimClock(START))
+        self.addCleanup(clock.set_clock, clock.Clock())
         self.gw = GlobalWorkspace(EventBus(), ScriptedLLM("嗯"), db_path=db_path())
         self.gw.evolve_creator = "10001"
 
@@ -108,6 +110,7 @@ class TestCommandLine(unittest.TestCase):
 
     def test_list_show_reply(self):
         clock.set_clock(SimClock(START))
+        self.addCleanup(clock.set_clock, clock.Clock())
         db = db_path()
         rid = Maintainer(db).file("self", "乃爱", "想要一个查天气的工具", "总有人问", "tool")["id"]
         code, out = self.run_cli(db, "list")

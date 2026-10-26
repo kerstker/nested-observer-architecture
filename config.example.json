@@ -24,5 +24,11 @@
   "DSH_EXE": "C:\\path\\to\\DeepSeek Harness.exe",
   "DSH_BIN": "C:\\path\\to\\dsh\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js",
   "EVOLVE_TIMEOUT": 1200,
-  "EVOLVE_MAX_PATCH_LINES": 300
+  "EVOLVE_MAX_PATCH_LINES": 300,
+  "MCP_ENABLED": false,
+  "MCP_TRUSTED_USERS": [],
+  "WANDER_ENABLED": false,
+  "WANDER_PER_DAY": 3,
+  "WANDER_STEPS": 10,
+  "WANDER_GAP_MINUTES": 120
 }

@@ -61,7 +61,9 @@ sandbox copy with tests and behavioural evaluation; proposals are applied only w
 - `app.py` — wiring: QQ, console, scheduler, backup, evolve channel.
 - `minimal-self/src/levels/` — her mind, one folder per level. `l10_consciousness/global_workspace.py` orchestrates
   a message end to end; `l8_agency/toolbox.py` is her tool list (add a tool = a `Tool(...)` entry + a handler);
-  `l17_self_improvement/` is this channel and the proposal pipeline.
+  `l17_self_improvement/` is this channel and the proposal pipeline. `l8_agency/mcp.py` + `access.py` give her
+  outside tools (a real browser via MCP, her own folder, run_python): **access.py decides who may use what** —
+  never widen a tier or remove a `deny`/`danger` rule without the user's explicit say-so.
 - `scripts/` — `maintainer.py` (this channel), `evolve.py` (proposals), `audit_tone.py` / `evaluate_quality.py` /
   `evaluate_life.py` / `audit_dynamics.py` (measure her; compare before/after when you change behaviour).
 - Tests: `minimal-self/tests`. Add one for whatever you change.

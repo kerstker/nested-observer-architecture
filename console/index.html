@@ -322,6 +322,14 @@
       <div class="muted" style="margin-bottom:8px">她自己做不到的事会写在这里；维护智能体（DSH）读到后会告诉你，你在 DSH 里决定。这里也可以直接回复，她下次醒着时会知道。</div>
       <ul class="list" id="asks" style="max-height:420px"></ul>
     </section>
+    <section>
+      <h2>外部能力（浏览器等）</h2>
+      <div class="muted" id="outside-meta" style="margin-bottom:8px"></div>
+      <div class="controls"><button type="button" id="wander-toggle"></button></div>
+      <ul class="list" id="outside-tools" style="margin-top:10px;max-height:260px"></ul>
+      <h3 style="margin-top:12px">她自己上网逛的手记</h3>
+      <ul class="list" id="wander-journal" style="max-height:300px"></ul>
+    </section>
   </div>
 </main>
 
@@ -461,16 +469,16 @@ const TRAIT = { affection: "亲和", tsundere: "傲娇", curiosity: "好奇", en
 const KIND = { dialogue: "对话", proactive: "主动", search: "探索", continuity: "醒来", thought: "念头", prediction: "预测" };
 const SRC = { perception: "感知", needs: "身体", memory: "联想", prediction: "预期", continuity: "连续性", inner_speech: "念头", self_model: "自我" };
 const MOOD = { Neutral: "平静", Joy: "开心", Anger: "生气", Sorrow: "难过", Fear: "害怕", Surprise: "惊讶", Disgust: "厌恶",
-               Excited: "兴奋", "Nervous Laughter": "紧张地笑", Betrayed: "被背叛的感觉" };
+               Excited: "兴奋", "Nervous Laughter": "紧张地笑", Betrayed: "被背叛的感觉", Bittersweet: "苦乐参半" };
 const BODY = { Energetic: "精力充沛", Normal: "状态正常", Tired: "有点累", Exhausted: "精疲力尽", "Sleeping (Zzz...)": "正在睡觉" };
 const FOCUS = { user_message: "有人在和她说话", hunger: "饥饿", social: "孤独", curiosity: "无聊", fatigue: "困倦", pain: "疼痛",
                 ignored: "被冷落", answer_surprise: "意外的回应", association: "回忆", gap: "意识中断", inner_speech: "自己的念头",
                 self_surprise: "对自己的意外" };
 const CHOICE = { spoke: "开口", silent: "沉默", consider: "犹豫", asleep: "睡着", woken: "被吵醒", muted: "被叫安静",
-                 feedback: "反馈", caught_up: "补看消息", noticed: "察觉", left: "离开", away: "已离开", limit: "上限", intend: "想做", attend: "收回注意", metacog: "元认知", goal: "目标", improve: "自我改进", evolved: "改造结果", tools: "用工具", task: "任务" };
+                 feedback: "反馈", caught_up: "补看消息", noticed: "察觉", left: "离开", away: "已离开", limit: "上限", intend: "想做", attend: "收回注意", metacog: "元认知", goal: "目标", improve: "自我改进", browse: "自己上网", evolved: "改造结果", tools: "用工具", task: "任务" };
 const CHOICE_CLASS = { spoke: "src-perception", silent: "src-inner_speech", consider: "src-needs", asleep: "src-memory",
                        woken: "src-prediction", muted: "src-prediction", feedback: "src-self_model", caught_up: "src-continuity",
-                       noticed: "src-self_model", left: "src-memory", away: "src-memory", limit: "src-prediction", intend: "src-needs", attend: "src-self_model", metacog: "src-self_model", goal: "src-needs", improve: "src-self_model", evolved: "src-self_model", tools: "src-continuity", task: "src-needs" };
+                       noticed: "src-self_model", left: "src-memory", away: "src-memory", limit: "src-prediction", intend: "src-needs", attend: "src-self_model", metacog: "src-self_model", goal: "src-needs", improve: "src-self_model", browse: "src-needs", evolved: "src-self_model", tools: "src-continuity", task: "src-needs" };
 // Which direction of change is good for her: more joy is good, more of a negative emotion is bad
 function causeClass(variable, delta) {
   if (variable === "surprise") return "src-perception";
@@ -981,6 +989,23 @@ loaders.improve = async () => {
     return li;
   }), "还没有提案");
   await loaders.asks();
+  await loaders.outside();
+};
+const TIER_WORDS = { owner: "创造者", trusted: "受信任的人", autonomous: "她自己的空闲时间" };
+loaders.outside = async () => {
+  const o = await api("outside");
+  if (!o.enabled) { $("outside-meta").textContent = o.hint || "未开启"; $("wander-toggle").style.display = "none"; fill("outside-tools", [], ""); fill("wander-journal", [], ""); return; }
+  $("wander-toggle").style.display = "";
+  const w = o.wander;
+  $("outside-meta").textContent = o.servers.map((s) => `${s.name}：${s.running ? "在线" : "没连上"}（${s.tools} 个工具，用过 ${s.calls} 次${s.error ? "，" + s.error : ""}）`).join(" · ") +
+    ` · 受信任的人 ${o.trusted.length} 个 · 她自己上网：${w.enabled ? "开（每天最多 " + w.per_day + " 次" + (o.wandering ? "，正在逛" : "") + "）" : "关"}`;
+  $("wander-toggle").textContent = w.enabled ? "关掉她自己上网" : "允许她自己上网逛";
+  $("wander-toggle").onclick = async () => { await api("outside", { wander_enabled: !w.enabled }); loaders.outside(); };
+  fill("outside-tools", o.tools.map((t) => el("li", {}, el("span", { class: "tag" }, `${t.server} · ${t.name}`),
+    el("div", { class: "muted" }, `${t.description} · 谁能用：${t.tiers.map((x) => TIER_WORDS[x]).join("、") || "没人"}`))), "没有工具");
+  fill("wander-journal", (o.journal || []).map((j) => el("li", {}, el("div", {}, j.note),
+    j.tell ? el("div", { class: "muted" }, "想告诉创造者：" + j.tell) : null,
+    el("div", { class: "when" }, `${ago(j.t)} · 用了 ${j.tools.length} 步`))), "还没有自己逛过");
 };
 const ASK_STATUS = { open: "新的", seen: "已看", need_info: "想多问", accepted: "答应了", done: "做好了", declined: "不做" };
 loaders.asks = async () => {

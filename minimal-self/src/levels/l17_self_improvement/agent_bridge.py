@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 SKIP_DIRS = {".git", "__pycache__", "node_modules", "models", ".trae", "data", ".idea", ".venv", ".venv-lora"}
 SKIP_SUFFIXES = (".sqlite", ".sqlite3", ".pyc", ".log", ".gguf", ".jpg", ".png")
 
+# Where DeepSeek Harness lives. Set DSH_EXE / DSH_BIN in the environment or config.json;
+# these are only the fallback so that a missing install fails with a clear message.
 DEFAULT_DSH_EXE = r"C:\path\to\DeepSeek Harness.exe"
 DEFAULT_DSH_BIN = r"C:\path\to\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js"
 

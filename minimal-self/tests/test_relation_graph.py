@@ -124,9 +124,9 @@ class TestGraph(unittest.TestCase):
 
     def test_sensitive_claims_about_people_are_not_kept(self):
         gw = make_gw()
-        say(gw, "u4", "飛硬", "Asuna是男同", group="g1")
-        gw.graph.extract(Extractor({"男同": [R("Asuna", "性取向", "男同", "飛硬", ok="value")]}), gw._names_in_chat)
-        self.assertEqual(gw.graph.context_for("Asuna 是谁", "u5", "x", "g1"), "")
+        say(gw, "u4", "阿铁", "小蓝是男同", group="g1")
+        gw.graph.extract(Extractor({"男同": [R("小蓝", "性取向", "男同", "阿铁", ok="value")]}), gw._names_in_chat)
+        self.assertEqual(gw.graph.context_for("小蓝 是谁", "u5", "x", "g1"), "")
 
 class TestIdentity(unittest.TestCase):
     def test_she_knows_her_number_and_her_real_creator(self):

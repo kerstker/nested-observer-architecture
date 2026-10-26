@@ -1,6 +1,6 @@
 # 乃爱（Noa）· 架构全貌
 
-> 快照：2026-10-26｜代码：`thefirstlife-dev/`｜当前 HEAD：见 `git log -1`
+> 快照：2026-10-26｜代码：仓库根目录（`app.py` 所在处）｜当前 HEAD：见 `git log -1`
 > 本文件按**代码现状**重写，替换了 10-25 的旧版。配图是四张 SVG（`docs/architecture-1…4-*.svg`），
 > 由 `python scripts/make_architecture_diagrams.py` 生成：架构变了就改脚本里的方块，运行一次，把新 SVG 一起提交。
 > 数字来自实际统计：核心 `minimal-self/src` 约 1.2 万行，`napcat/` 1.7 千行，`console/` 0.75 千行，`app.py` 等根目录 1.7 千行，
@@ -272,7 +272,7 @@
 ## 16. 怎么跑
 
 ```powershell
-cd thefirstlife-dev
+cd <仓库目录>
 python app.py                                   # 她
 python scripts\maintainer.py list               # 她给维护者的请求
 python scripts\audit_tone.py report new         # 情商评估（先 replay 再 report）

@@ -1,41 +1,71 @@
 {
-  "NAPCAT_WS_URL": "",
+  "_comment": "Copy to config.json and fill in what you use. config.json is gitignored: it holds keys. Optional subsystems (MCP / Minecraft / roaming / self-improvement) are off by default.",
+
+  "NAPCAT_WS_URL": "ws://127.0.0.1:3000/onebot/v11/ws",
   "NAPCAT_WS_TOKEN": "",
   "NAPCAT_WS_TOKEN_HEADER": "Authorization",
   "NAPCAT_WS_TOKEN_IN_HEADER": true,
   "NAPCAT_WS_TOKEN_IN_QUERY": false,
+  "NAPCAT_WS_TOKEN_QUERY_PARAM": "access_token",
   "NAPCAT_WS_HEARTBEAT_INTERVAL": 30,
   "NAPCAT_WS_MAX_RECONNECT_TIME": 30,
-  "LLM_MODEL_PATH": "models/Qwen2.5-32B-Instruct-Q5_K_M.gguf",
+
   "LLM_BACKEND": "deepseek",
   "DEEPSEEK_MODEL": "deepseek-flash",
   "DEEPSEEK_BASE_URL": "https://api.deepseek.com",
+  "LLM_MODEL_PATH": "models/Qwen2.5-32B-Instruct-Q5_K_M.gguf",
+  "LOCAL_MODEL_URL": "http://127.0.0.1:8093",
+  "EMBED_MODEL_DIR": "",
+
   "VISION_MAX_IMAGES": 2,
   "IDLE_THOUGHT_INTERVAL": 600,
-  "CONSOLE_TOKEN": "",
+  "BOT_TRIGGER_PREFIX": "/noa",
   "PORT": 8080,
+  "CONSOLE_TOKEN": "",
+
   "AUTONOMOUS_GROUPS": [],
   "MAX_INTERJECTIONS_PER_HOUR": 2,
   "MAX_GROUP_MESSAGES_PER_HOUR": 30,
+  "MAX_REPLIES_PER_PERSON_5MIN": 20,
   "BOT_ACCOUNTS": [],
-  "EVOLVE_ENABLED": false,
-  "EVOLVE_CREATOR_ID": "",
-  "EVOLVE_MAX_PER_DAY": 1,
-  "DSH_EXE": "C:\\path\\to\\DeepSeek Harness.exe",
-  "DSH_BIN": "C:\\path\\to\\dsh\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js",
-  "EVOLVE_TIMEOUT": 1200,
-  "EVOLVE_MAX_PATCH_LINES": 300,
+
+  "BACKUP_KEEP_DAILY": 7,
+  "BACKUP_KEEP_WEEKLY": 4,
+  "BACKUP_DIR_2": "",
+
+  "FIREWALL_OWN_PORTS": [8080, 3000, 3001, 6099, 6185],
+  "FIREWALL_BLOCK_DOMAINS": [],
+
   "MCP_ENABLED": false,
   "MCP_TRUSTED_USERS": [],
+  "MCP_SERVERS": {},
+
   "WANDER_ENABLED": false,
   "WANDER_PER_DAY": 3,
   "WANDER_STEPS": 10,
   "WANDER_GAP_MINUTES": 120,
+
+  "FILE_READ_ROOTS": [],
+  "FILE_WRITE_ROOTS": [],
+
+  "EVOLVE_ENABLED": false,
+  "EVOLVE_CREATOR_ID": "",
+  "EVOLVE_MAX_PER_DAY": 1,
+  "EVOLVE_TIMEOUT": 1200,
+  "EVOLVE_MAX_PATCH_LINES": 300,
+  "DSH_EXE": "",
+  "DSH_BIN": "",
+
   "MC_ENABLED": false,
+  "MC_CONTROL": "mcpfabric",
   "MC_HOST": "localhost",
   "MC_PORT": 25565,
   "MC_USERNAME": "Noa",
   "MC_NAMES": ["乃爱", "Noa"],
   "MC_TRUSTED_PLAYERS": [],
-  "MC_PLAY_PER_HOUR": 6
+  "MC_PLAY_PER_HOUR": 600,
+  "MC_BRIDGE_URL": "http://127.0.0.1:25599",
+  "MC_BRIDGE_TOKEN": "",
+  "MC_MCPFABRIC_SERVER": "",
+  "MC_CLIENT_DIR": ""
 }

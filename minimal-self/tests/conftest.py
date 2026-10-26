@@ -1,10 +1,10 @@
-"""Test helper: make temp directories writable under this machine's DSH sandbox.
+"""Test helper: make temp directories writable inside restricted Windows environments.
 
-Python's tempfile.mkdtemp() creates directories with mode 0o700; the DSH Windows sandbox denies
-writes inside such a directory (only directories with inherited rights are writable), so tests
-would fail with "unable to open database file" for a reason that has nothing to do with the code.
-The workaround is only installed when that problem is actually observed; elsewhere mkdtemp is
-untouched. See docs/图片理解.md (tests section) and the sandbox ACL note in the project notes.
+Python's tempfile.mkdtemp() creates directories with mode 0o700; some sandboxed Windows setups
+deny writes inside such a directory (only directories with inherited rights are writable), so
+tests would fail with "unable to open database file" for a reason that has nothing to do with the
+code. The workaround is only installed when that problem is actually observed; elsewhere mkdtemp is
+untouched, so CI and ordinary machines keep the standard behaviour.
 """
 import os
 import shutil

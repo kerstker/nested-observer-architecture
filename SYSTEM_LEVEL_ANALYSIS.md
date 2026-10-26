@@ -1,5 +1,8 @@
 # Noa 系统层级深度分析与演进 (System Level Analysis)
 
+> **历史快照（2026-01，Level 12）**：这是一次层级设计推演，最终落地为现在的 L1–L19；
+> 当前实现请看 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+
 本文档旨在从技术和哲学双重维度，深度剖析 Noa 系统的当前状态 (Level 12)，并为通往 Level 13 和 Level 14 提供具体的技术蓝图。
 
 ---

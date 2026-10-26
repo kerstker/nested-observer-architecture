@@ -1,5 +1,8 @@
 # Noa 系统状态报告与演进路线图
 
+> **历史快照（2026-01-17，Level 16.5）**：层级编号与当前代码（L1–L19，见
+> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)）不完全对应，保留此文件只为记录演进过程。
+
 **当前版本**: Level 16.5 (Digital Entity with Autonomy)
 **更新日期**: 2026-01-17
 

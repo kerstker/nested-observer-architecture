@@ -4,6 +4,9 @@ data/
 *.sqlite
 *.sqlite3
 memory.backup-*.sqlite
+memory.restored-*.sqlite
+memory.before-restore-*.sqlite
+backups/
 *.log
 .env
 

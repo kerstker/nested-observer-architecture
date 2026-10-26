@@ -22,7 +22,7 @@ from ...levels.l1_perception.group_language import GroupLanguage
 from ...levels.l1_perception.stickers import StickerMemory
 from ...levels.l2_memory.memory import MemorySystem
 from ...levels.l2_memory.embedding import Embedder
-from ...levels.l2_memory.layers import EpisodicMemory, SemanticMemory, Autobiography
+from ...levels.l2_memory.layers import EpisodicMemory, SemanticMemory, Autobiography, Diary
 from ...levels.l2_memory.profiles import PersonProfiles
 from ...levels.l2_memory.chatlog import ChatLog, chat_key
 from ...levels.l2_memory.graph import RelationGraph, PUBLIC as GRAPH_PUBLIC, SELF as GRAPH_SELF
@@ -36,7 +36,7 @@ from ...levels.l7_tom.hearsay import RULE as HEARSAY_RULE
 from ...levels.l8_agency.drives import DriveSystem, Option
 from ...levels.l8_agency.goals import GoalSystem
 from ...levels.l8_agency.tasks import TaskBook
-from ...levels.l8_agency.toolbox import Toolbox, ToolContext, parse_text_actions, when_text
+from ...levels.l8_agency.toolbox import Toolbox, ToolContext, parse_text_actions, when_text, now_text
 from .attention_schema import AttentionSchema
 from .metacognition import Metacognition
 from ...levels.l9_narrative.narrative import NarrativeSelf
@@ -103,6 +103,7 @@ class GlobalWorkspace:
         self.semantic = SemanticMemory(db_path, embedder)
         self.autobiography = Autobiography(db_path)
         self.profiles = PersonProfiles(db_path)
+        self.diary = Diary(db_path)
         self.graph = RelationGraph(db_path)
         self.chatlog = ChatLog(db_path)
         self.narrative = NarrativeSelf(db_path, self.episodes, self.semantic, self.autobiography, self.memory.db)
@@ -200,6 +201,10 @@ class GlobalWorkspace:
         self.last_consolidation = 0.0
         self.last_graph_update = 0.0
         self._self_key = None
+        # Daily online backup of her memory (the app turns it on: BackupManager; off in tests)
+        self.backup = None
+        self.last_backup_check = 0.0
+        self.last_backup_alert = 0.0
 
         # Level 17: the channel through which she may propose changes to her own code.
         # Off unless configured; never reachable from group chat; nothing applies without approval.
@@ -513,6 +518,21 @@ class GlobalWorkspace:
                 self.last_consolidation = now
                 await asyncio.to_thread(self._dream_process)
 
+        # Her memory is one file: it is copied (and the copy checked) every day, and the person who
+        # looks after her hears about it when that fails
+        if self.backup is not None and now - self.last_backup_check >= 600:
+            self.last_backup_check = now
+            try:
+                if self.backup.due(now):
+                    result = await asyncio.to_thread(self.backup.run, now)
+                    if not result["ok"] and self.evolve_creator and now - self.last_backup_alert > 6 * 3600:
+                        self.last_backup_alert = now
+                        self.output_queue.append({"type": "proactive", "target": {"type": "private", "id": str(self.evolve_creator)},
+                                                  "content": f"提醒一下：我的每日记忆备份失败了（{result.get('error', '原因不明')}）。"
+                                                             "备份没做成之前，记忆只有一份。"})
+            except Exception as e:
+                logger.error(f"[Backup] check failed: {e}")
+
         # Who-is-related-to-whom keeps up with conversation on its own (a few batches every half hour),
         # and stickers she collected get looked at once, so she knows what she is sending
         if self.inference_engine and now - self.last_graph_update >= 1800:
@@ -571,6 +591,11 @@ class GlobalWorkspace:
         if self.evolve_creator:
             creator = self.graph.user_entity(str(self.evolve_creator), self._nickname(str(self.evolve_creator)))
             self.graph.add(me, "创造者", creator, None, GRAPH_SELF, "系统", None, now, public)
+            conn = sqlite3.connect(self.memory.db.db_path)
+            conn.execute("INSERT OR IGNORE INTO relationships (user_id_a, user_id_b, relation_type, strength, updated_at) "
+                         "VALUES (?, 'self', '创造者（我的创造者，来自配置，是事实）', 1.0, ?)", (str(self.evolve_creator), now))
+            conn.commit()
+            conn.close()
             # Relationships recorded before this rule: whoever said "I'm your creator/dad" got it as fact
             conn = sqlite3.connect(self.memory.db.db_path)
             rows = conn.execute("SELECT user_id_a, relation_type FROM relationships WHERE user_id_b = 'self' AND user_id_a != ?",
@@ -1059,7 +1084,7 @@ class GlobalWorkspace:
         self._update_temperament()   # personality may have shifted; her resting mood follows
         self.style_edge *= 0.5       # a night's sleep takes the edge off
         if report.get("diary"):
-            self.memory.remember_fact("self", f"Diary: {report['diary']}")
+            self.diary.write(report["diary"])
         for meme in report.get("memes", []):
             self.memory.add_meme(meme, "dream")
         self._review_goals_in_sleep(report)
@@ -1951,13 +1976,6 @@ If not, output "NO".
         expects_reply = "?" in final_response or "？" in final_response
         self.user_models.on_noa_message(user_id, clock.now(), "reply", expects_reply)
 
-        # 9. Memory Consolidation
-        keywords = ["我叫", "我是", "喜欢", "讨厌", "爱", "恨", "住在", "岁", "名字", "My name", "I am", "like", "hate"]
-        # Her own name contains 爱: without removing it, every mention of her looked like a personal fact
-        about_them = user_input.replace("乃爱", "").replace("Noa", "").replace("noa", "")
-        if any(k in about_them for k in keywords):
-            await asyncio.to_thread(self._consolidate_memory, user_id, user_input)
-
         self._save_state("message")
         return final_response
 
@@ -2146,7 +2164,7 @@ If not, output "NO".
         goal_block = goal_rule = ""
         if goals_now:
             goal_block = f"[我心里记着的事]（我自己想做、或者答应过的；合适的时候自然地去做，不用刻意）\n{goals_now}\n"
-            goal_rule = "\n10. 如果这次对话让上面记着的某件事有了结果（比如兑现了答应的事），在最后单独一行写 [完成:编号]。"
+            goal_rule = "如果这次对话让上面记着的某件事有了结果（比如兑现了答应的事），在最后单独一行写 [完成:编号]。"
 
         top_memes = self.memory.db.get_top_memes(limit=3)
         meme_text = ", ".join(top_memes) if top_memes else "无"
@@ -2165,7 +2183,7 @@ If not, output "NO".
             sticker_block = "[我收藏的表情]（画的是什么，和大家一般在什么时候发它）\n" + "\n".join(
                 f"- [表情:{o['id']}] " + (f"画的是：{o['looks']}；" if o.get("looks") else "（还没看清画的是什么）")
                 + "大家常在「" + "」「".join(c[:24] for c in o["contexts"][-2:]) + "」的时候发" for o in options) + "\n"
-            sticker_rule = "\n9. 想发表情就单独一行写 [表情:编号]（只能用上面列出的），也可以只发表情不说话；觉得不合适就不发。"
+            sticker_rule = "想发表情就单独一行写 [表情:编号]（只能用上面列出的），也可以只发表情不说话；觉得不合适就不发。"
         if addressed:
             choice = "如果你此刻真的不想回（很生气、很累、或者觉得没什么好说），可以只输出：（不回）"
         else:
@@ -2194,21 +2212,13 @@ If not, output "NO".
                           f"- 我上一次改自己是：{self._evolve_history()}{running}\n"
                           f"- 我自己发起的改进：{self.diagnosis.describe()}\n"
                           "- 我有一条修改自己代码的通道（工具 evolve），提案要创造者批准后才会生效。\n")
-            evolve_rule = ("\n9. 创造者明确让你改自己的代码时，必须真的用工具 evolve 去做，"
+            evolve_rule = ("创造者明确让你改自己的代码时，必须真的用工具 evolve 去做，"
                            "不许只在嘴上答应。你自己觉得哪里不好、想让自己变得更好时，也可以主动提出，"
                            "说清楚想改什么、为什么。")
         elif self.evolve_enabled:
             self_block = ""
         else:
             self_block = ""
-
-        if "[System Info] Real-time Search Results" in context:
-            instruction_block = """1. 你刚拿到实时搜索结果（见上方上下文），直接用它回答，不要再输出 Action: SEARCH。
-2. 说话自然，像刚用手机查到一样。"""
-        else:
-            instruction_block = """1. 先想：需不需要查、回忆、记下什么？需要就先用工具（可以连着用几次），拿到结果再回答；不知道的事不要编。
-2. 答应了以后才做的事（等会儿告诉你、明天提醒你），用 schedule_task 记下来，不要只在嘴上说。
-3. 同一件事别反复调用同一个工具。"""
 
         # She really looks at the pictures of this message: the image blocks ride along with the
         # last user turn, so the text only has to say that the message came with pictures.
@@ -2227,14 +2237,52 @@ If not, output "NO".
             anchors = ("[我说话最像自己的时候]（我以前说过的几句，语气像我——学语气，不要照抄内容）\n"
                        + "\n".join(f"- {line}" for line in lines) + "\n")
 
+        # Order matters for cost and speed: the provider caches a prompt by its beginning, so what never
+        # (or rarely) changes goes first - who she is, her tools, the rules, the format - then what
+        # changes slowly (her story, who she is talking to), then what changes with every message
+        # (memories, the conversation, her state this second), and the few per-message instructions last.
+        now_line = f"{now_text()}（{env_context['period']}），{group_context}"
+        specific = [f"- {choice}"]
+        if "[System Info] Real-time Search Results" in context:
+            specific.append("- 你刚拿到实时搜索结果（见上方上下文），直接用它回答，不要再输出 Action: SEARCH；说话自然，像刚用手机查到一样。")
+        for extra in (sticker_rule, evolve_rule, goal_rule):
+            if extra.strip():
+                specific.append("- " + extra.strip())
         return f"""<|im_start|>system
 {persona}
+
+[工具]
+{tools_block}
+[要求]
+1. 先想：需不需要查、回忆、记下什么？需要就先用工具（可以连着用几次），拿到结果再回答；不知道的事不要编。
+2. 答应了以后才做的事（等会儿告诉你、明天提醒你），用 schedule_task 记下来，不要只在嘴上说。
+3. 同一件事别反复调用同一个工具。
+4. 你说的话自然地受“此刻我心里在想”和身体心情影响，但不要逐条复述，也不要描述自己的状态。
+5. 不写动作和神态描写，只写你会打出来发给对方的字。
+6. 用中文。
+7. 想分几条发就用换行隔开，每行就是一条消息，像平时连着发几条那样；多数时候一两条就够了。
+8. 这是 QQ：想戳对方一下就单独一行写 [戳一戳]；只想用表情回应对方这条消息、不打字，就只写 [回应:赞]（可用：赞、爱心、笑、抱抱、OK）。
+9. {HEARSAY_RULE}
+（下面是我自己的情况和这次聊天的内容；“这一次的要求”在最后。）
+
+格式：
+Thought: [内心独白]
+Confidence: [0-100，你对自己这句话说得对、说得合适有多大把握]
+Response: [说出口的话]
 
 [我是谁]
 {autobiography}
 {self._self_facts()}
-{self._continuity_block()}
-{anchors}[此刻我心里在想]
+{anchors}{self._continuity_block()}
+[关于 {nickname}]
+- {about_user}
+- 看起来的情绪：{tom_analysis['emotion']}。{tom_instruction}
+{shared_block}{self_block}{goal_block}
+[记忆与上下文]
+{context}
+
+{group_block}{sticker_block}
+[此刻我心里在想]
 {mind}
 
 [我的身体和心情]
@@ -2243,34 +2291,13 @@ If not, output "NO".
 - {self.self_model.describe()}
 - {self.attention_schema.describe()}
 {introspection}
-[关于 {nickname}]
-- {about_user}
-- 看起来的情绪：{tom_analysis['emotion']}。{tom_instruction}
-{shared_block}{self_block}{goal_block}
-[工具]
-{tools_block}
-[记忆与上下文]
-{context}
-
-{group_block}{sticker_block}
 [环境]
-- 时间：{env_context['time']}（{env_context['period']}），{group_context}
+- 现在：{now_line}
 - 群里流行的梗：{meme_text}
 
-[要求]
-{instruction_block}
-4. 你说的话自然地受“此刻我心里在想”和身体心情影响，但不要逐条复述，也不要描述自己的状态。
-5. 不写动作和神态描写，只写你会打出来发给对方的字。
-6. 用中文。
-7. {choice}
-8. 想分几条发就用换行隔开，每行就是一条消息，像平时连着发几条那样；多数时候一两条就够了。{sticker_rule}{evolve_rule}{goal_rule}
-11. 这是 QQ：想戳对方一下就单独一行写 [戳一戳]；只想用表情回应对方这条消息、不打字，就只写 [回应:赞]（可用：赞、爱心、笑、抱抱、OK）。
-12. {HEARSAY_RULE}
-
-格式：
-Thought: [内心独白]
-Confidence: [0-100，你对自己这句话说得对、说得合适有多大把握]
-Response: [说出口的话]<|im_end|>
+[这一次的要求]
+{chr(10).join(specific)}
+（按上面的“格式”回答：Thought / Confidence / Response）<|im_end|>
 <|im_start|>user
 {said}<|im_end|>
 <|im_start|>assistant
@@ -2390,6 +2417,9 @@ Response: [说出口的话]<|im_end|>
         about = self.user_models.describe(t["user_id"]) if t["user_id"] else ""
         return f"""<|im_start|>system
 {self._build_persona_prompt()}
+
+[现在]
+{now_text()}
 
 [要做的事]
 这是你之前答应 {name} 的（ta 是在{where}里跟你说的，{format_duration(clock.now() - t['created'])}前）：
@@ -2846,46 +2876,6 @@ Response: 要发给 ta 的话（可以分几行，每行一条消息；不写动
             final_response = final_response.split('\n')[0]
 
         return final_response
-
-    def _consolidate_memory(self, user_id: str, user_input: str):
-        """Extract and store facts/relationships from user input using LLM"""
-        if not self.inference_engine:
-            return
-
-        prompt = f"""
-        Analyze the user's input.
-        1. Extract any permanent facts (Name, Preferences).
-        2. Extract any defined relationship (e.g., "I am your master", "We are friends").
-
-        User Input: "{user_input}"
-
-        Output JSON:
-        {{
-            "fact": "...",
-            "relationship": "..." (or null)
-        }}
-        """
-
-        try:
-            output = self._llm(prompt, max_tokens=120)
-            # Handle potential raw string output if JSON parsing failed inside engine
-            if isinstance(output, str):
-                return
-
-            fact = output.get("fact")
-            relation = output.get("relationship")
-
-            if fact and fact != "None":
-                self.memory.remember_fact(user_id, fact)
-
-            if relation and relation != "None":
-                # Who someone is *to her* is not theirs to declare: only her creator is her creator
-                if user_id != str(self.evolve_creator or "") and CLAIMED_ROLE.search(relation):
-                    relation = f"ta 自称：{relation}（不是事实）"
-                self.memory.set_relationship(user_id, relation)
-
-        except Exception as e:
-            logger.error(f"[Memory] Consolidation Error: {e}")
 
     def _summarize_conversation(self, user_id: str, group_id: str = None) -> str:
         """

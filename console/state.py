@@ -246,7 +246,8 @@ def memory(gw, q: str = "", limit: int = 30) -> Dict[str, Any]:
            "unconsolidated": _rows(db, "SELECT COUNT(*) AS n FROM episodes WHERE consolidated=0")[0]["n"]
                              if counts.get("episodes") is not None else 0,
            "facts": _rows(db, "SELECT id, t, user_id, fact, confidence, visibility FROM semantic_facts ORDER BY id DESC LIMIT 15"),
-           "autobiography": _rows(db, "SELECT id, t, text FROM autobiography ORDER BY id DESC LIMIT 5")}
+           "autobiography": _rows(db, "SELECT id, t, text FROM autobiography ORDER BY id DESC LIMIT 5"),
+           "diary": _rows(db, "SELECT id, t, text FROM diary ORDER BY id DESC LIMIT 5")}
     q = q.strip()
     if getattr(gw, "graph", None) is not None:
         out["graph"] = gw.graph.stats()
@@ -356,6 +357,7 @@ def metrics(gw, days: int = 7) -> Dict[str, Any]:
         "tools": {"calls": len(tools), "failed": len(failed), "by_tool": by_tool},
         "tasks": tasks,
         "graph": gw.graph.stats() if getattr(gw, "graph", None) is not None else {},
+        "backup": gw.backup.status(now) if getattr(gw, "backup", None) is not None else None,
         "memory": {**mem, "facts": (_rows(db, "SELECT COUNT(*) AS n FROM semantic_facts") or [{"n": 0}])[0]["n"],
                    "profiles": (_rows(db, "SELECT COUNT(*) AS n FROM person_profiles") or [{"n": 0}])[0]["n"],
                    "recall_ms_avg": round(sum(rec) / len(rec), 1) if rec else None,

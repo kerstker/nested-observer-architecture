@@ -173,6 +173,7 @@
         <button data-act="think">让她想点什么</button>
         <button data-act="tick">心跳一次</button>
         <button data-act="snapshot">存状态快照</button>
+        <button data-act="backup">立即备份记忆</button>
         <button data-act="selfcheck">立即自检</button>
       </div>
     </section>
@@ -389,6 +390,7 @@
   <div class="col">
     <section><h2>蒸馏出的事实（semantic_facts）</h2><ul class="list" id="facts"></ul></section>
     <section><h2>自传的历次版本</h2><ul class="list" id="autobio-history"></ul></section>
+    <section><h2>她的日记（每晚睡前写）</h2><ul class="list" id="diary-list"></ul></section>
   </div>
 </main>
 
@@ -1048,6 +1050,7 @@ loaders.memory = async (q) => {
     ...Object.entries(m.counts).map(([k, v]) => el("div", {}, el("b", {}, v), el("span", {}, TABLE[k] || k))));
   fill("facts", m.facts.map((f) => memItem("事实", f)), "还没有蒸馏出事实");
   fill("autobio-history", m.autobiography.map((a) => el("li", {}, a.text, el("div", { class: "when" }, ago(a.t)))), "还没有");
+  fill("diary-list", (m.diary || []).map((a) => el("li", {}, a.text, el("div", { class: "when" }, ago(a.t)))), "还没写过日记");
   if (m.results) {
     const groups = [["经历", m.results.episodes], ["事实", m.results.facts], ["对话", m.results.interactions], ["旧记忆", m.results.memories]];
     const rels = m.relations || [];
@@ -1084,6 +1087,9 @@ async function loadHealth() {
   kvs("health-kv", [
     ["工具明细", Object.entries(t.by_tool).map(([k, [n, f]]) => `${TOOLNAME[k] || k} ${n}${f ? "（失败 " + f + "）" : ""}`).join("、") || "还没用过"],
     ["人格 24 小时变化", (moved.join("、") || "没变") + `（每天上限 ±${h.personality.daily_limit}）`],
+    ["记忆备份", h.backup ? `${h.backup.count} 份（${(h.backup.bytes / 1048576).toFixed(0)} MB）· 最近一份 ${h.backup.age_hours == null ? "还没有" : h.backup.age_hours + " 小时前"}`
+        + (h.backup.copies ? ` · 另存 ${h.backup.copies} 处` : " · 只存在这一块盘上")
+        + (h.backup.last_result && !h.backup.last_result.ok ? ` · ⚠ 上次失败：${h.backup.last_result.error}` : "") : "没有开启"],
     ["记忆模型", `${m.model || "—"} · 事实 ${m.facts} 条 · 回忆最慢 ${m.recall_ms_max ?? "—"} ms`],
     ["最近评估", ev ? `${ev.file}；最差：` + ev.worst.map((r) => `${r.name}（${r.reason}）`).join("；") : "还没跑过：python scripts/evaluate_quality.py"],
   ]);

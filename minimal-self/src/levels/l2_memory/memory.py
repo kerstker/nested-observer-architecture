@@ -54,17 +54,9 @@ class MemorySystem:
         self.write_queue.put((self.db.set_relationship, (user_id, relation)))
         self._get_relationship_cached.cache_clear()
         
-    def remember_fact(self, user_id: str, fact: str):
-        """Explicitly store a fact (Async)"""
-        self.write_queue.put((self.db.add_memory, (user_id, "fact", fact)))
-
     def add_meme(self, content: str, source_user_id: str):
         """Store meme (Async)"""
         self.write_queue.put((self.db.add_meme, (content, source_user_id)))
-
-    def search_memories(self, user_id: str, query: str, limit: int = 5) -> List[str]:
-        """Expose search functionality wrapper"""
-        return self.db.search_memories(user_id, query, limit)
 
     @lru_cache(maxsize=100)
     def _get_user_cached(self, user_id: str):
@@ -119,13 +111,9 @@ class MemorySystem:
                             "“引用 X 说的「…」”是在回复 X 的那句话）\n" + transcript)
         
         # 2. Get relevant long-term memories
-        # Callers with meaning-based recall (episodic/semantic layers) pass `memories` directly
-        if memories is None:
-            if query:
-                memories = self.db.search_memories(user_id, query, limit=k)
-            else:
-                memories = self.db.get_all_memories(user_id, limit=k)
-            
+        # Recall by meaning lives in the episodic/semantic layers: the caller passes what it found
+        memories = memories or []
+
         memory_text = "\n".join([f"- {m}" for m in memories])
         
         # 3. Get User Profile & Relationship (Cached)

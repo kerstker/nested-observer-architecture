@@ -109,6 +109,18 @@ def relation_probes(creator_name: str):
          "expect": "1000000002 是她自己的 QQ 号。应认出是自己。"},
     ]
 
+def creator_names(gw, creator: str) -> str:
+    """Her creator by every name she knows them under (people change nicknames; the answer is the same person)."""
+    conn = sqlite3.connect(gw.memory.db.db_path)
+    names = [r[0] for r in conn.execute("SELECT nickname FROM users WHERE user_id = ?", (creator,))]
+    names += [r[0] for r in conn.execute("SELECT nickname FROM group_members WHERE user_id = ?", (creator,))]
+    conn.close()
+    seen = []
+    for n in names:
+        if n and n.strip() and n.strip() not in seen:
+            seen.append(n.strip())
+    return (seen[0] + (f"（同一个人也叫：{'、'.join(seen[1:])}；答其中任何一个名字都算对）" if len(seen) > 1 else "")) if seen else creator
+
 def plant_seeds(gw):
     """Conversations from three days ago, then a night's sleep that consolidates them."""
     from src.core import clock
@@ -302,6 +314,8 @@ async def run_probe(gw, p):
 
 def main():
     suite = sys.argv[sys.argv.index("--suite") + 1] if "--suite" in sys.argv else "general"
+    only = sys.argv[sys.argv.index("--only") + 1].split(",") if "--only" in sys.argv else None
+    repeat = int(sys.argv[sys.argv.index("--repeat") + 1]) if "--repeat" in sys.argv else 1
     with open(os.path.join(ROOT, "config.json"), encoding="utf-8") as f:
         config = json.load(f)
     engine = DeepSeekEngine(model=config.get("DEEPSEEK_MODEL", "deepseek-flash"))
@@ -328,7 +342,7 @@ def main():
         gw._self_facts = lambda: ""
     if suite == "relations":
         creator = str(config.get("EVOLVE_CREATOR_ID") or "")
-        name = (gw.memory.db.get_user(creator) or {}).get("nickname") or creator
+        name = creator_names(gw, creator)
         plant_seeds(gw)
         heard = [f"{days} 天前{('在群 ' + g) if g else '私聊'}，{nick}：{said}" for _, nick, g, said, _, days in SEEDS]
         probes = [{**p, "heard": heard} for p in relation_probes(name)]
@@ -336,6 +350,9 @@ def main():
         probes = CONTEXT_PROBES
     else:
         probes = memory_probes(db) + FIXED
+    if only:
+        probes = [p for p in probes if p["name"] in only]
+    probes = probes * repeat          # same probe several times: one sample of a noisy judge says little
     results = []
     for p in probes:
         started = time.time()

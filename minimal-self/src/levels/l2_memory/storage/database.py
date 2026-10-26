@@ -407,41 +407,6 @@ class MemoryDatabase:
 
     # --- Memory Management ---
 
-    def add_memory(self, user_id: str, category: str, content: str, confidence: float = 1.0):
-        conn = self._get_conn()
-        c = conn.cursor()
-        c.execute('''INSERT INTO memories (user_id, category, content, confidence, created_at, last_accessed)
-            VALUES (?, ?, ?, ?, ?, ?)''', (user_id, category, content, confidence, clock.now(), clock.now()))
-        conn.commit()
-        conn.close()
-
-    def search_memories(self, user_id: str, query: str = "", limit: int = 5) -> List[str]:
-        """Simple keyword search for now. Vector search can be added later."""
-        conn = self._get_conn()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
-        
-        # Simple fuzzy match
-        like_query = f"%{query}%"
-        c.execute('''SELECT content FROM memories 
-            WHERE user_id = ? AND content LIKE ?
-            ORDER BY last_accessed DESC LIMIT ?''', (user_id, like_query, limit))
-        
-        rows = c.fetchall()
-        conn.close()
-        return [r["content"] for r in rows]
-
-    def get_all_memories(self, user_id: str, limit: int = 10) -> List[str]:
-        conn = self._get_conn()
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
-        c.execute('''SELECT content FROM memories 
-            WHERE user_id = ? 
-            ORDER BY confidence DESC, created_at DESC LIMIT ?''', (user_id, limit))
-        rows = c.fetchall()
-        conn.close()
-        return [r["content"] for r in rows]
-
     # --- Knowledge Base (Level 18) ---
 
     def add_knowledge(self, title: str, content: str, tags: List[str], source: str = "manual"):

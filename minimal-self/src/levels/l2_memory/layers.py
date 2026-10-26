@@ -530,6 +530,38 @@ class SemanticMemory:
         return [dict(r) for r in rows]
 
 
+class Diary:
+    """Level 9: the diary she writes each night - a first-person account of the day, kept as she wrote it.
+
+    (It used to be filed in `memories` next to extracted facts, a table nothing reads any more.)"""
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        conn = _connect(db_path)
+        conn.execute("CREATE TABLE IF NOT EXISTS diary (id INTEGER PRIMARY KEY AUTOINCREMENT, t REAL, text TEXT)")
+        # One-time move of the entries that were kept in the old `memories` table
+        if conn.execute("SELECT COUNT(*) FROM diary").fetchone()[0] == 0:
+            try:
+                old = conn.execute("SELECT created_at, content FROM memories WHERE content LIKE 'Diary: %' "
+                                   "ORDER BY id").fetchall()
+            except sqlite3.OperationalError:
+                old = []
+            conn.executemany("INSERT INTO diary (t, text) VALUES (?, ?)", [(r[0], r[1][len("Diary: "):]) for r in old])
+        conn.commit()
+        conn.close()
+
+    def write(self, text: str):
+        conn = _connect(self.db_path)
+        conn.execute("INSERT INTO diary (t, text) VALUES (?, ?)", (clock.now(), text))
+        conn.commit()
+        conn.close()
+
+    def recent(self, limit: int = 5) -> List[Dict[str, Any]]:
+        conn = _connect(self.db_path)
+        rows = conn.execute("SELECT id, t, text FROM diary ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+
 class Autobiography:
     """Level 9: The self-narrative 'who I am and what I have been through', rewritten each sleep."""
     def __init__(self, db_path: str):

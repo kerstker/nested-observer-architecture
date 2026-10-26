@@ -448,7 +448,8 @@ class Toolbox:
     def menu(self, ctx: ToolContext, native: bool) -> str:
         """The [工具] block of her prompt."""
         tools = self.available(ctx)
-        head = (f"现在是 {now_text()}。需要的话可以调用工具（可以连续用几次，系统会把结果给你），"
+        # (no clock here: this block is part of the cached beginning of the prompt; the time is in [环境])
+        head = ("需要的话可以调用工具（可以连续用几次，系统会把结果给你），"
                 "用完再回答。不需要就直接回答，别为了用而用。")
         lines = [f"- {t.name}：{t.description}" for t in tools]
         if not native:

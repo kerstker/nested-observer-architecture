@@ -144,6 +144,12 @@ def create_console_router(gw, token: str = None) -> APIRouter:
         elif a == "tick":
             await gw.tick()
             result = "心跳了一次"
+        elif a == "backup":
+            if getattr(gw, "backup", None) is None:
+                raise HTTPException(400, "备份没有开启")
+            r = await asyncio.to_thread(gw.backup.run, clock.now(), "console")
+            result = (f"备份好了：{r['name']}（{r['bytes'] // 1024} KB，已检查，另存 {r.get('copies', 0)} 处）" if r["ok"]
+                      else f"备份失败：{r.get('error')}")
         elif a == "snapshot":
             await asyncio.to_thread(gw._save_state, "console")
             result = "存了一份状态快照"

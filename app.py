@@ -321,6 +321,8 @@ if config.get('MCP_ENABLED'):
         hub.start_all()
         global_workspace.mcp = hub
         global_workspace.mcp_trusted = tuple(str(u) for u in (config.get('MCP_TRUSTED_USERS') or []))
+        global_workspace.file_read_roots += list(config.get('FILE_READ_ROOTS') or [])
+        global_workspace.file_write_roots += list(config.get('FILE_WRITE_ROOTS') or [])
         global_workspace.wander.update({
             "enabled": bool(config.get('WANDER_ENABLED', False)),
             "per_day": int(config.get('WANDER_PER_DAY', 3)),

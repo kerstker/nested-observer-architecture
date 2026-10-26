@@ -153,6 +153,10 @@ class GlobalWorkspace:
         self.workspace_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), "data", "workspace")
         self.inbox_dir = os.path.join(self.workspace_dir, "inbox")       # files people sent her over QQ
         self.last_inbox_prune = 0.0
+        # Folders the owner lets her read (desktop, documents, downloads) and write (only her own folder unless config says more)
+        home = os.path.expanduser("~")
+        self.file_read_roots = [os.path.join(home, d) for d in ("Desktop", "Documents", "Downloads")]
+        self.file_write_roots = []
         # Her own time on the web: nobody asked, she goes and looks (a few times a day, a few steps each)
         self.wander = {"enabled": False, "per_day": 3, "steps": 10, "gap": 2 * 3600.0, "curiosity": 0.45}
         self.wandering = False

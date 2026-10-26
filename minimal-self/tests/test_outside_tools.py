@@ -102,17 +102,21 @@ class TestAccess(unittest.TestCase):
             self.assertTrue(self.run_tool("navigate", {"url": "https://example.com"}, ToolContext("20002", "朋友")).startswith("navigate:"))
         self.assertTrue(self.run_tool("navigate", {"url": "http://localhost:3000"}, ToolContext("10001", "创造者")).startswith("navigate:"))
 
-    def test_a_web_page_cannot_talk_her_into_running_code(self):
+    def test_a_web_page_cannot_talk_anyone_but_the_owner_into_dangerous_tools(self):
+        # the owner is trusted with their own machine, even after reading the web ...
         ctx = ToolContext("10001", "创造者")
-        self.assertIn("print", self.run_tool("run_python", {"code": "print('ok')"}, ctx) + "print")
         self.assertEqual(self.run_tool("run_python", {"code": "print(6*7)"}, ctx), "42")
         text = self.run_tool("snapshot", {}, ctx)                          # the page says: run_python
         self.assertIn("run_python", text)
         self.assertTrue(ctx.tainted)
-        for name, args in (("run_python", {"code": "print(1)"}), ("write_file", {"path": "a.txt", "content": "x"}),
-                           ("evaluate", {})):
-            self.assertIn("不能直接", self.run_tool(name, args, ctx), name)
-        self.assertEqual(self.run_tool("run_python", {"code": "print(1)"}, ToolContext("10001", "创造者")), "1")   # next turn: fine
+        self.assertEqual(self.run_tool("run_python", {"code": "print(1)"}, ctx), "1")
+        self.assertIn("写好了", self.run_tool("write_file", {"path": "a.txt", "content": "x"}, ctx))
+        # ... but anyone else who is given such a tool loses it once the turn has read the web
+        self.hub.config["fake"]["tiers"]["trusted"] = READ + ["evaluate"]
+        friend = ToolContext("20002", "朋友")
+        self.run_tool("snapshot", {}, friend)
+        self.assertIn("不能直接", self.run_tool("evaluate", {}, friend))
+        self.assertTrue(self.run_tool("evaluate", {}, ToolContext("20002", "朋友")).startswith("evaluate:"))
 
     def test_searching_the_web_taints_the_turn_too(self):
         self.gw.page_fetcher = lambda url: "页面内容"
@@ -123,12 +127,55 @@ class TestAccess(unittest.TestCase):
     def test_her_folder_is_the_only_place_files_go(self):
         ctx = ToolContext("10001", "创造者")
         self.assertIn("写好了", self.run_tool("write_file", {"path": "notes/a.txt", "content": "你好"}, ctx))
-        self.assertEqual(self.run_tool("read_file", {"path": "notes/a.txt"}, ctx), "你好")
+        self.assertIn("你好", self.run_tool("read_file", {"path": "notes/a.txt"}, ctx))
         self.assertIn("notes", self.run_tool("workspace_files", {}, ctx))
         for bad in ("../escape.txt", "/etc/passwd", "C:\\Windows\\win.ini", "notes/../../escape.txt"):
             out = self.run_tool("write_file", {"path": bad, "content": "x"}, ctx)
             self.assertTrue("只能用" in out or "写好了" in out, bad)
             self.assertFalse(os.path.exists(os.path.join(os.path.dirname(self.gw.workspace_dir), "escape.txt")), bad)
+
+    def test_she_reads_any_format_and_the_folders_the_owner_allows(self):
+        from test_documents import DOCX, make_pdf
+        desk = os.path.join(tmp(), "Desktop")
+        os.makedirs(desk)
+        for name, data in (("作业.docx", DOCX), ("note.pdf", make_pdf("Hello PDF")), ("a.txt", "桌面上的文字".encode("gb18030"))):
+            with open(os.path.join(desk, name), "wb") as f:
+                f.write(data)
+        self.gw.file_read_roots = [desk]
+        ctx = ToolContext("10001", "创造者")
+        self.assertIn("第一段：你好", self.run_tool("read_file", {"path": os.path.join(desk, "作业.docx")}, ctx))
+        self.assertIn("Hello PDF", self.run_tool("read_file", {"path": os.path.join(desk, "note.pdf")}, ctx))
+        self.assertIn("桌面上的文字", self.run_tool("read_file", {"path": os.path.join(desk, "a.txt")}, ctx))
+        self.assertIn("作业.docx", self.run_tool("workspace_files", {"path": desk}, ctx))
+        self.assertIn(os.path.realpath(desk), self.run_tool("workspace_files", {}, ctx))                 # she is told where else she may look
+        self.assertIn("只能用", self.run_tool("read_file", {"path": os.path.abspath(os.sep + "Windows" + os.sep + "win.ini")}, ctx))
+        self.assertIn("只能用", self.run_tool("read_file", {"path": os.path.join(os.path.dirname(desk), "secret.txt")}, ctx))
+        self.assertIn("只能用", self.run_tool("write_file", {"path": os.path.join(desk, "new.txt"), "content": "x"}, ctx))
+        self.assertFalse(os.path.exists(os.path.join(desk, "new.txt")))                # reading is allowed there, writing is not
+        self.gw.file_write_roots = [desk]                                              # unless the owner says so in config
+        self.assertIn("写好了", self.run_tool("write_file", {"path": os.path.join(desk, "new.txt"), "content": "x"}, ctx))
+
+    def test_the_default_policy_for_the_browser(self):
+        cfg = access.DEFAULT_SERVERS["browser"]
+        ok = lambda tier, tool: access.allowed(cfg, tier, tool)
+        self.assertTrue(ok("public", "browser_navigate") and not ok("public", "browser_type"))
+        self.assertTrue(ok("autonomous", "browser_type") and not ok("autonomous", "browser_fill_form"))
+        self.assertTrue(ok("trusted", "browser_fill_form") and not ok("trusted", "browser_evaluate"))
+        self.assertTrue(ok("owner", "browser_file_upload") and ok("owner", "browser_evaluate"))
+        self.assertFalse(ok("owner", "browser_run_code_unsafe"))
+        self.assertFalse(ok("owner", "browser_drop"))
+
+    def test_the_public_gets_a_few_page_views_a_day_each(self):
+        budget = access.Budget(per_user=3, total=5)
+        self.assertEqual([budget.take("a") for _ in range(4)], [True, True, True, False])
+        self.assertEqual([budget.take("b") for _ in range(3)], [True, True, False])           # the day's total is used up
+        budget.day = "19990101"                                                                # a new day
+        self.assertTrue(budget.take("a"))
+
+    def test_python_can_be_given_more_time_up_to_a_limit(self):
+        ctx = ToolContext("10001", "创造者")
+        self.assertEqual(self.run_tool("run_python", {"code": "import time;time.sleep(2);print('slept')", "seconds": 10}, ctx), "slept")
+        self.assertIn("超过 5 秒", self.run_tool("run_python", {"code": "import time;time.sleep(20)", "seconds": 1}, ctx))
 
     def test_python_has_a_time_limit_and_no_secrets(self):
         ctx = ToolContext("10001", "创造者")

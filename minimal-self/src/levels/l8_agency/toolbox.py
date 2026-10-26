@@ -375,31 +375,84 @@ def _workspace(gw) -> str:
     os.makedirs(path, exist_ok=True)
     return os.path.realpath(path)
 
-def _workspace_path(gw, rel: str) -> str:
-    """A path inside her folder - never outside it, whatever the text says (.., absolute paths, links)."""
+def _roots(gw, write: bool) -> List[str]:
+    extra = getattr(gw, "file_write_roots" if write else "file_read_roots", ()) or ()
+    return [_workspace(gw)] + [os.path.realpath(r) for r in extra if os.path.isdir(r)]
+
+def _file_path(gw, raw: str, write: bool = False) -> str:
+    """A real path the owner's tools may touch: her folder, plus the folders the owner allowed (reading: the
+    desktop, documents and downloads by default; writing: only her folder unless config says more). Never
+    anywhere else, whatever the text says (.., links, other drives)."""
+    raw = str(raw or "").strip()
     root = _workspace(gw)
-    full = os.path.realpath(os.path.join(root, str(rel or "").strip().lstrip("/\\")))
-    if full != root and not full.startswith(root + os.sep):
-        raise ValueError("只能用我自己的工作文件夹里的文件")
+    full = os.path.realpath(raw if os.path.splitdrive(raw)[0] else os.path.join(root, raw.lstrip("/\\")))
+    if not any(full == r or full.startswith(r + os.sep) for r in _roots(gw, write)):
+        raise ValueError("只能用我自己的工作文件夹（和创造者允许的文件夹）里的文件" + ("，写入只能在工作文件夹里" if write else ""))
     return full
+
+def _workspace_path(gw, rel: str) -> str:
+    return _file_path(gw, rel, write=True)
 
 def _workspace_files(gw, ctx: ToolContext, args):
     root = _workspace(gw)
+    where = str(args.get("path") or "").strip()
+    if where:
+        try:
+            folder = _file_path(gw, where)
+            entries = sorted(os.scandir(folder), key=lambda e: (not e.is_dir(), e.name.lower()))
+        except (OSError, ValueError) as e:
+            return f"看不了：{e}"
+        rows = [f"{e.name}/" if e.is_dir() else f"{e.name}（{documents_size(e.stat().st_size)}）" for e in entries[:80]]
+        return f"{folder} 里有：\n" + "\n".join(rows) + (f"\n……（共 {len(entries)} 项）" if len(entries) > 80 else "")
     rows = []
     for base, dirs, files in os.walk(root):
         dirs[:] = [d for d in dirs if d not in (".playwright-mcp", "_run", "__pycache__")]
         for f in files:
             p = os.path.join(base, f)
             rows.append(f"{os.path.relpath(p, root)}（{os.path.getsize(p)} 字节）")
-    return "我的工作文件夹里有：\n" + "\n".join(rows[:60]) if rows else "我的工作文件夹现在是空的。"
+    others = "、".join(r for r in _roots(gw, False)[1:])
+    tail = f"\n我还能看这些文件夹（给 path）：{others}" if others else ""
+    return ("我的工作文件夹里有：\n" + "\n".join(rows[:60]) if rows else "我的工作文件夹现在是空的。") + tail
+
+def documents_size(n: int) -> str:
+    return f"{n} 字节" if n < 1024 else f"{n / 1024:.0f} KB" if n < 1024 * 1024 else f"{n / 1024 / 1024:.1f} MB"
+
+def _paged(result: Dict[str, Any], name: str, args) -> str:
+    """A page of a document's text, with the way to the next page."""
+    text = result.get("text") or ""
+    try:
+        offset = max(0, int(args.get("offset") or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    if not text:
+        return f"{name}：{result.get('note') or '没有读出文字'}"
+    page = text[offset:offset + ATTACHMENT_PAGE]
+    more = (f"\n（共 {len(text)} 字，这是 {offset}–{offset + len(page)}；接着看用 offset={offset + len(page)}）"
+            if offset + len(page) < len(text) else f"\n（共 {len(text)} 字，到结尾了）")
+    note = f"（{result['note'].lstrip('；')}）\n" if result.get("note") and offset == 0 else ""
+    return f"{name}：\n{note}{page}{more}"
 
 def _read_file(gw, ctx: ToolContext, args):
+    """Any file she is allowed to see - text, PDF, Word, Excel, PowerPoint, zip... - as text, page by page."""
+    from src.levels.l1_perception import documents
     try:
-        path = _workspace_path(gw, args.get("path"))
-        with open(path, encoding="utf-8", errors="replace") as f:
-            return f.read(MAX_RESULT)
+        path = _file_path(gw, args.get("path"))
+        if os.path.isdir(path):
+            return "这是个文件夹，用 workspace_files 看里面有什么。"
+        if os.path.getsize(path) > 25 * 1024 * 1024:
+            return "文件太大了（超过 25 MB）。"
+        cache = gw.__dict__.setdefault("_doc_cache", {})
+        entry = str(args.get("entry") or "").strip() or None
+        key = (path, os.path.getmtime(path), entry)
+        if key not in cache:
+            with open(path, "rb") as f:
+                data = f.read()
+            if len(cache) >= 8:
+                cache.pop(next(iter(cache)))
+            cache[key] = documents.extract(data, os.path.basename(path), entry)
     except (OSError, ValueError) as e:
         return f"读不了：{e}"
+    return _paged(cache[key], os.path.basename(path), args)
 
 def _write_file(gw, ctx: ToolContext, args):
     content = str(args.get("content") or "")
@@ -418,6 +471,10 @@ def _run_python(gw, ctx: ToolContext, args):
     """Run a script in her folder: a time limit and a clean environment (no keys), not a sandbox - which is
     why only the owner gets it, and never in a turn that read the web."""
     code = str(args.get("code") or "")
+    try:
+        limit = min(120, max(5, int(args.get("seconds") or 30)))
+    except (TypeError, ValueError):
+        limit = 30
     if not code.strip():
         return "要运行什么？code 是空的。"
     if len(code) > 20_000:
@@ -431,10 +488,10 @@ def _run_python(gw, ctx: ToolContext, args):
     env = {k: os.environ[k] for k in ("PATH", "SYSTEMROOT", "TEMP", "TMP", "USERPROFILE", "LANG") if k in os.environ}
     env["PYTHONIOENCODING"] = "utf-8"
     try:
-        done = subprocess.run([sys.executable, "-I", script], cwd=root, capture_output=True, timeout=30, env=env,
+        done = subprocess.run([sys.executable, "-I", script], cwd=root, capture_output=True, timeout=limit, env=env,
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:
-        return "运行超过 30 秒，被停掉了。"
+        return f"运行超过 {limit} 秒，被停掉了。"
     finally:
         try:
             os.remove(script)
@@ -481,18 +538,7 @@ def _read_attachment(gw, ctx: ToolContext, args):
     result = cache[key]
     if access.tier_of(gw, ctx) != access.OWNER:
         ctx.tainted = True        # what a stranger put in a file is data; the owner's own files in private are not
-    text = result.get("text") or ""
-    try:
-        offset = max(0, int(args.get("offset") or 0))
-    except (TypeError, ValueError):
-        offset = 0
-    if not text:
-        return f"{name}：{result.get('note') or '没有读出文字'}"
-    page = text[offset:offset + ATTACHMENT_PAGE]
-    more = (f"\n（共 {len(text)} 字，这是 {offset}–{offset + len(page)}；接着看用 offset={offset + len(page)}）"
-            if offset + len(page) < len(text) else f"\n（共 {len(text)} 字，到结尾了）")
-    note = f"（{result['note'].lstrip('；')}）\n" if result.get("note") and offset == 0 else ""
-    return f"{name}：\n{note}{page}{more}"
+    return _paged(result, name, args)
 
 def _owner(gw, ctx):
     return access.tier_of(gw, ctx) == access.OWNER
@@ -543,12 +589,16 @@ TOOLS: List[Tool] = [
          "不带 name 就列出收到过的文件；长文件用 offset 往后翻；压缩包用 entry 指定里面的文件。",
          _props(name=_s("文件名，不写就列出所有"), offset=_i("从第几个字开始读"), entry=_s("压缩包里的文件名")),
          _read_attachment, max_result=5200),
-    Tool("workspace_files", "看看我自己的工作文件夹里有什么文件（我写的脚本、整理的资料都在这里）。", _props(), _workspace_files, _owner),
-    Tool("read_file", "读我工作文件夹里的一个文件。", _props(["path"], path=_s("相对工作文件夹的路径")), _read_file, _owner),
-    Tool("write_file", "把内容写成我工作文件夹里的一个文件（笔记、脚本、整理好的数据）。",
+    Tool("workspace_files", "看文件夹里有什么：不带 path 是我自己的工作文件夹（我写的脚本、整理的资料），带 path 可以看创造者允许的文件夹"
+         "（比如桌面、文档、下载）。", _props(path=_s("文件夹路径，不写就是工作文件夹")), _workspace_files, _owner),
+    Tool("read_file", "读一个文件的文字：文本、代码、PDF、Word、Excel、PPT、压缩包……都行。路径是工作文件夹里的相对路径，或者创造者允许的文件夹里的完整路径；"
+         "长的用 offset 往后翻。", _props(["path"], path=_s("文件路径"), offset=_i("从第几个字开始"), entry=_s("压缩包里的文件名")),
+         _read_file, _owner, max_result=5200),
+    Tool("write_file", "把内容写成我工作文件夹里的一个文件（笔记、脚本、整理好的数据）；要写到别的位置，要创造者在配置里允许。",
          _props(["path", "content"], path=_s("相对工作文件夹的路径"), content=_s("文件内容")), _write_file, _owner, danger=True),
     Tool("run_python", "运行一段 Python 来做计算、处理数据、整理文件（在我的工作文件夹里跑，30 秒内，没有网络之外的特殊权限；"
-         "print 出来的才是结果）。", _props(["code"], code=_s("完整的 Python 代码")), _run_python, _owner, timeout=40, danger=True),
+         "print 出来的才是结果）。", _props(["code"], code=_s("完整的 Python 代码"), seconds=_i("最多跑多久，默认 30，最多 120")), _run_python, _owner,
+         timeout=130, danger=True),
 ]
 
 # The old text protocol and some names models like to use
@@ -620,6 +670,8 @@ class Toolbox:
                 why = access.url_ok((args or {}).get("url"), tier, _public_host)
                 if why:
                     return why
+                if tier == access.PUBLIC and not gw.__dict__.setdefault("_public_budget", access.Budget()).take(str(ctx.user_id)):
+                    return "今天给大家看网页看得够多了，明天再来吧（创造者让我看不受这个限制）。"
                 return gw.mcp.call(server, raw, args or {}, timeout=float(cfg.get("timeout", 45)))
 
             def available(gw, ctx, cfg=cfg, raw=raw):
@@ -678,7 +730,7 @@ class Toolbox:
         started = time.perf_counter()
         if tool is None or tool not in self.available(ctx):
             result = f"没有叫 {name} 的工具（或者现在不能用）。"
-        elif tool.danger and ctx.tainted:
+        elif tool.danger and ctx.tainted and access.tier_of(self.gw, ctx) != access.OWNER:
             result = ("这一轮我已经读过网页上的内容，为了安全不能直接运行代码或写文件。要做的话，请告诉创造者，"
                       "让 ta 在下一句话里明确说一遍再来。")
         else:

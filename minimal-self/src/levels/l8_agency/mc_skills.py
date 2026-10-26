@@ -272,14 +272,14 @@ class Skills:
         trunk = None
         for (cx, cz), cys in sorted(columns.items(), key=score)[:8]:
             cbase = min(cys)
-            if abs(cbase - me["y"]) > 5:
+            if abs(cbase - me["y"]) > 8:
                 continue
             below = self._block(cx, cbase - 1, cz)
             name = below.split(":")[-1]
             if below and not below.endswith(":air") and LOG_SUFFIX not in name and "leaves" not in name:
                 trunk = (cx, cz, cbase)
                 break
-            self.failed[(cx, cz)] = now                 # a branch, or a log in the air: not something to walk to
+            # (a branch, or a log in the air: just not a trunk - not a failure to remember)
         if trunk is None:
             return "附近没有站在地上、够得着的树干。"
         x, z, base = trunk
@@ -302,6 +302,9 @@ class Skills:
             self.progress = f"砍第 {logs + 1} 块（{block.split(':')[-1]}）"
             if self._break(x, y, z):
                 logs += 1
+            elif self.last_blocked:
+                self.progress = f"第 {logs + 1} 块被 {self.last_blocked[3].split(':')[-1]} 挡住了"
+                break
         if self._stop.is_set():
             return f"砍了 {logs} 块就停了。"
         picked = self.collect_drops(radius=8)

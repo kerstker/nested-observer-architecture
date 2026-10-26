@@ -162,7 +162,8 @@ class DeepSeekEngine:
         for c in message.get("tool_calls") or []:
             fn = c.get("function") or {}
             try:
-                args = json.loads(fn.get("arguments") or "{}")
+                # strict=False: code and long text come with raw newlines inside the string, which the model means
+                args = json.loads(fn.get("arguments") or "{}", strict=False)
                 if not isinstance(args, dict):
                     args = {"value": args}
             except json.JSONDecodeError:

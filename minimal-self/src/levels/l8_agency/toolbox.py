@@ -479,6 +479,8 @@ def _read_attachment(gw, ctx: ToolContext, args):
             cache.pop(next(iter(cache)))
         cache[key] = documents.extract(data, os.path.basename(match).split("-", 1)[-1], entry)
     result = cache[key]
+    if access.tier_of(gw, ctx) != access.OWNER:
+        ctx.tainted = True        # what a stranger put in a file is data; the owner's own files in private are not
     text = result.get("text") or ""
     try:
         offset = max(0, int(args.get("offset") or 0))
@@ -540,7 +542,7 @@ TOOLS: List[Tool] = [
     Tool("read_attachment", "读别人在这个聊天里发给我的文件（文本、PDF、Word、Excel、PPT、压缩包、电子书……）。"
          "不带 name 就列出收到过的文件；长文件用 offset 往后翻；压缩包用 entry 指定里面的文件。",
          _props(name=_s("文件名，不写就列出所有"), offset=_i("从第几个字开始读"), entry=_s("压缩包里的文件名")),
-         _read_attachment, web=True, max_result=5200),
+         _read_attachment, max_result=5200),
     Tool("workspace_files", "看看我自己的工作文件夹里有什么文件（我写的脚本、整理的资料都在这里）。", _props(), _workspace_files, _owner),
     Tool("read_file", "读我工作文件夹里的一个文件。", _props(["path"], path=_s("相对工作文件夹的路径")), _read_file, _owner),
     Tool("write_file", "把内容写成我工作文件夹里的一个文件（笔记、脚本、整理好的数据）。",

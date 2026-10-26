@@ -190,6 +190,11 @@ class TestReceiving(unittest.TestCase):
         self.assertIn("第一章", first)
         self.assertIn("offset=", first)
         self.assertTrue(ctx.tainted)                                          # what a stranger wrote is data
+        gw.evolve_creator = "42"
+        mine = ToolContext("42", "创造者")
+        run({"name": "long.txt"}, mine)
+        self.assertFalse(mine.tainted)                                        # the owner's own file is not
+        gw.evolve_creator = None
         second = run({"name": "long.txt", "offset": 4500}, ctx)
         self.assertNotIn("第一章", second)
         self.assertIn("压缩包里的话", run({"name": "z.zip", "entry": "in.txt"}, ctx))

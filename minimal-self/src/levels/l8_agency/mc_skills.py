@@ -78,9 +78,12 @@ def first_obstacle(rpc, eye: tuple, target: tuple) -> Optional[tuple]:
 
 
 class Skills:
-    def __init__(self, rpc: Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]], who: Callable[[str], Optional[Dict]] = None):
+    def __init__(self, rpc: Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]], who: Callable[[str], Optional[Dict]] = None,
+                 patterns=None):
         self.rpc = rpc                      # method, params -> result dict or None
         self.find_player = who              # name -> entity dict (x, y, z, distance) or None
+        from src.levels.l8_agency.mc_craft import Crafter, PatternIndex
+        self.crafter = Crafter(rpc, self, patterns or PatternIndex(None), stop=lambda: self._stop.is_set())
         self.current: Optional[str] = None
         self.progress = ""
         self.last_result = ""
@@ -96,10 +99,10 @@ class Skills:
 
     def start(self, name: str, **args) -> str:
         fn = {"chop_tree": self.chop_tree, "collect_drops": self.collect_drops, "go_to_player": self.go_to_player,
-              "mine": self.mine}.get(name)
+              "mine": self.mine, "craft": self.craft, "place": self.place, "equip": self.equip, "tidy": self.tidy}.get(name)
         if fn is None:
-            return (f"不会 {name}。会的有：chop_tree（砍一棵树）、mine（挖某种方块，blocks 写 id）、collect_drops（捡掉落物）、"
-                    "go_to_player（走到某人身边）。")
+            return (f"不会 {name}。会的有：chop_tree（砍一棵树）、mine（挖某种方块）、craft（合成）、place（放方块）、"
+                    "equip（拿起合适的工具）、tidy（整理快捷栏）、collect_drops（捡掉落物）、go_to_player（走到某人身边）。")
         if self.busy() and name == self.current:
             return f"已经在做 {name} 了（{self.progress}），不用再开始一次。"
         if self.busy():
@@ -215,6 +218,8 @@ class Skills:
 
     def _passable(self, block_id: str) -> bool:
         name = block_id.split(":")[-1]
+        if name.endswith(("_block", "_path", "_planks", "_log", "_wood", "_slab", "_stairs")):
+            return False                                   # grass_block is ground, not grass
         return not block_id or any(p in name for p in self.PASSABLE)
 
     def _approach(self, x: int, y: int, z: int) -> bool:
@@ -352,6 +357,106 @@ class Skills:
                 got += 1
             time.sleep(0.4)
         return f"捡了 {got} 次东西。" if got else "地上没什么可捡的。"
+
+    # --- hands and bag ---------------------------------------------------------------------
+
+    TOOL_KINDS = {"pickaxe": "_pickaxe", "axe": "_axe", "shovel": "_shovel", "sword": "_sword", "hoe": "_hoe"}
+    MATERIAL_RANK = ("wooden", "golden", "stone", "copper", "iron", "diamond", "netherite")
+
+    def _inventory(self) -> Dict[str, Any]:
+        return self.rpc("player.getInventory", {}) or {}
+
+    def hold(self, item: str) -> bool:
+        """Take an item in hand: pick its hotbar slot, or swap it there from the bag."""
+        inv = self._inventory()
+        for it in inv.get("hotbar") or []:
+            if it.get("id") == item:
+                self.rpc("inventory.selectHotbar", {"slot": int(it["slot"])})
+                return True
+        main = next((it for it in inv.get("main") or [] if it.get("id") == item), None)
+        if not main:
+            return False
+        sel = int(inv.get("selectedSlot") or 0)
+        self.rpc("inventory.swapSlots", {"slotA": int(main["slot"]), "slotB": sel})
+        self.rpc("inventory.selectHotbar", {"slot": sel})
+        return True
+
+    def best_tool(self, kind: str) -> Optional[str]:
+        suffix = self.TOOL_KINDS.get(kind, f"_{kind}")
+        inv = self._inventory()
+        have = [it["id"] for it in (inv.get("hotbar") or []) + (inv.get("main") or []) if str(it.get("id", "")).endswith(suffix)]
+        if not have:
+            return None
+        rank = lambda i: max((n for n, m in enumerate(self.MATERIAL_RANK) if f":{m}_" in i), default=2)
+        return max(have, key=rank)
+
+    def equip(self, kind: str = "pickaxe") -> str:
+        tool = self.best_tool(kind)
+        if not tool:
+            return f"包里没有{kind}。"
+        return f"拿起了 {tool.split(':')[-1]}。" if self.hold(tool) else f"没拿起 {tool}。"
+
+    def tidy(self) -> str:
+        """The best pickaxe, axe, sword and shovel in hotbar slots 0-3, food in 8 - so her hands find them."""
+        moved = []
+        for slot, kind in enumerate(("pickaxe", "axe", "sword", "shovel")):
+            tool = self.best_tool(kind)
+            if not tool:
+                continue
+            inv = self._inventory()
+            if any(it.get("slot") == slot and it.get("id") == tool for it in inv.get("hotbar") or []):
+                continue
+            src = next((it for it in (inv.get("hotbar") or []) + (inv.get("main") or []) if it.get("id") == tool), None)
+            if src:
+                self.rpc("inventory.swapSlots", {"slotA": int(src["slot"]), "slotB": slot})
+                moved.append(tool.split(":")[-1])
+        return ("整理好了：" + "、".join(moved) + " 放到了快捷栏前几格。") if moved else "快捷栏已经挺顺手了。"
+
+    def place(self, item: str = "", x: Optional[int] = None, y: Optional[int] = None, z: Optional[int] = None) -> str:
+        if x is None or y is None or z is None:
+            pos = self.place_near(item)
+            return f"放好了 {item.split(':')[-1]}（{pos[0]},{pos[1]},{pos[2]}）。" if pos else f"没地方放 {item.split(':')[-1]}。"
+        pos = self.place_at(item, int(x), int(y), int(z))
+        return f"放好了（{x},{y},{z}）。" if pos else "没放上去（够不着、没有依附面，或者那里有东西）。"
+
+    def place_near(self, item: str) -> Optional[tuple]:
+        """Put a block from the bag on free ground right next to her, the way a player drops a table down."""
+        me = self._me()
+        if not me or not item:
+            return None
+        fx, fy, fz = math.floor(me["x"]), math.floor(me["y"]), math.floor(me["z"])
+        for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1), (2, 0), (0, 2), (-2, 0), (0, -2)):
+            pos = self.place_at(item, fx + dx, fy, fz + dz, walk=False)
+            if pos:
+                return pos
+        return None
+
+    def place_at(self, item: str, x: int, y: int, z: int, walk: bool = True) -> Optional[tuple]:
+        got = (self.rpc("perception.blocks", {"positions": [{"x": x, "y": y, "z": z}, {"x": x, "y": y - 1, "z": z}]}) or {}).get("blocks") or []
+        if len(got) < 2:
+            return None
+        at, below = (str(b.get("id") or "") for b in got)
+        if not self._passable(at) or self._passable(below) or "water" in below or "lava" in below:
+            return None
+        if walk and not self._approach(x, y - 1, z):
+            return None
+        if not self.hold(item):
+            return None
+        self._smooth_look(x + 0.5, y - 0.01, z + 0.5, 0.25)          # the top face of the block she builds on
+        self.rpc("interact.placeBlock", {"x": x, "y": y - 1, "z": z, "face": "up"})
+        deadline = time.time() + 2
+        while time.time() < deadline:
+            time.sleep(0.2)
+            # mods swap some blocks once placed (Visual Workbench: "visualworkbench:minecraft/crafting_table")
+            if self._block(x, y, z).split(":")[-1].split("/")[-1] == item.split(":")[-1]:
+                return (x, y, z)
+        return None
+
+    def craft(self, item: str = "", count: int = 1) -> str:
+        if not item:
+            return "要做什么？item 写物品 id。"
+        self.progress = f"合成 {item.split(':')[-1]}"
+        return self.crafter.craft(item, int(count or 1))
 
     def go_to_player(self, player: str = "") -> str:
         if not self.find_player:

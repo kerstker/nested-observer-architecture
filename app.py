@@ -346,6 +346,7 @@ if config.get('MCP_ENABLED'):
         if 'minecraft' in servers:
             from src.levels.l8_agency.game import GameBridge
             global_workspace.mc_players = tuple(str(p) for p in (config.get('MC_TRUSTED_PLAYERS') or []))
+            global_workspace.mc_client_dir = config.get('MC_CLIENT_DIR')      # her game folder: recipe patterns
             global_workspace.game = GameBridge(global_workspace, config.get('MC_USERNAME', 'Noa'),
                                                names=tuple(config.get('MC_NAMES') or ('乃爱', 'Noa')),
                                                play_per_hour=int(config.get('MC_PLAY_PER_HOUR', 600)))

@@ -145,6 +145,14 @@ def tools():
         args = {"player": str(a["player"])} if name == "go_to_player" and a.get("player") else {}
         if name == "mine":
             args = {"blocks": str(a.get("blocks") or ""), "count": int(a.get("count") or 8)}
+        elif name == "craft":
+            args = {"item": str(a.get("item") or ""), "count": int(a.get("count") or 1)}
+        elif name == "place":
+            args = {"item": str(a.get("item") or "")}
+            if all(a.get(k) is not None for k in ("x", "y", "z")):
+                args.update(x=int(a["x"]), y=int(a["y"]), z=int(a["z"]))
+        elif name == "equip":
+            args = {"kind": str(a.get("kind") or "pickaxe")}
         return game.skills.start(name, **args)
 
     def find(gw, ctx, a):
@@ -178,10 +186,13 @@ def tools():
         Tool("mc_recipes", "查几样物品的合成配方（返回能用来合成的 ref）。",
              _props(["items"], items=_s("物品 id，逗号分隔，比如 minecraft:crafting_table")), recipes, **common(read_only=True)),
         Tool("mc_skill", "成套的动作，在后台自己做完（像玩家一样先走过去、看到再动手，不隔空）：chop_tree 砍附近一整棵树并捡木头，"
-             "mine 挖附近某种方块（blocks 写 id，count 几块），collect_drops 捡地上的东西，go_to_player 走到某人身边（写 player），"
-             "stop 停下，status 看进度。",
-             _props(["name"], name=_s("chop_tree / mine / collect_drops / go_to_player / stop / status"),
-                    player=_s("go_to_player 时写玩家名"), blocks=_s("mine 时写方块 id，逗号分隔"), count=_i("mine 时挖几块，默认 8")),
+             "mine 挖附近某种方块（blocks 写 id），craft 合成（item 写物品 id，会自己摆格子、需要时找/放/做工作台、缺木板木棍会先做），"
+             "place 放方块（item；写 x,y,z 放到那里，不写就放在身边），equip 拿起合适的工具（kind: pickaxe/axe/sword/shovel），"
+             "tidy 把工具整理到快捷栏，collect_drops 捡地上的东西，go_to_player 走到某人身边（写 player），stop 停下，status 看进度。",
+             _props(["name"], name=_s("chop_tree / mine / craft / place / equip / tidy / collect_drops / go_to_player / stop / status"),
+                    player=_s("go_to_player 时写玩家名"), blocks=_s("mine 时写方块 id，逗号分隔"),
+                    item=_s("craft / place 时写物品 id，比如 minecraft:wooden_pickaxe"), kind=_s("equip 时写工具种类"),
+                    count=_i("mine 挖几块 / craft 做几个"), x=_i("place 的 x"), y=_i("place 的 y"), z=_i("place 的 z")),
              skill, **common()),
         Tool("mc_find_blocks", "在自己周围找某些方块的位置（比如原木、矿石、箱子），按距离给出坐标。",
              _props(["blocks"], blocks=_s("方块 id，逗号分隔，比如 minecraft:oak_log"), radius=_i("多远以内（格），默认 32"),

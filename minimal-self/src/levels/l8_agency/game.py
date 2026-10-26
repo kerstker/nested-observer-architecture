@@ -22,6 +22,7 @@ import base64
 import json
 import logging
 import math
+import os
 import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -206,13 +207,19 @@ class GameBridge:
 - 像和朋友一起打游戏：想干嘛就干嘛（砍树、捡东西、去找人、看看周围、盖点什么、聊两句），一次只做一两件小事，做完就停，下一轮马上又轮到你。
 - 别发呆：手上没活的时候立刻给自己找下一件事（继续攒资源、去没去过的地方、整理背包、做饭、练装备），一件接一件。
 - 成套的事用 mc_skill：chop_tree 砍一整棵树，collect_drops 捡地上的东西，go_to_player 走到某人身边；它在后台做，你可以边做边说话。正在做的时候别再下新的移动，除非想停下（mc_skill stop）。
-- 挖东西用 mc_skill：chop_tree 砍树，mine 挖指定的方块（blocks 写 id，比如 minecraft:coal_ore）；它们会先走到看得见的位置、转过去再挖，不会隔着东西挖。大活儿用后台任务：craft_item 按配方做东西（先 plan_craft 算步骤），travel_to 走到远处的坐标；用 job_status 看进度、job_cancel 停。别重复开同一个任务。（参数例子：craft_item {{"item":"minecraft:crafting_table","count":1}}；travel_to {{"x":-1100,"y":70,"z":280}}）
+- 挖东西用 mc_skill：chop_tree 砍树，mine 挖指定的方块（blocks 写 id，比如 minecraft:coal_ore）；它们会先走到看得见的位置、转过去再挖，不会隔着东西挖。做东西用 mc_skill craft（item 写 id）：它像玩家一样把材料一格格摆进合成格，要工作台会自己找/放/做一个，缺木板木棍会先做；别用 craft_item（这个整合包配方书是锁着的，会失败）。放方块用 mc_skill place，换工具用 mc_skill equip，工具乱了用 mc_skill tidy。大活儿用后台任务：travel_to 走到远处的坐标；用 job_status 看进度、job_cancel 停。别重复开同一个任务。（参数例子：craft_item {{"item":"minecraft:crafting_table","count":1}}；travel_to {{"x":-1100,"y":70,"z":280}}）
 - 后台任务在跑的时候不要再用 mc_skill 开新动作（身体在忙），用 job_status 看进度，或者先 job_cancel。手确实空着才用 mc_skill。
 - 我每 20 秒左右会自动看一眼真实画面；mc_look 不要每轮都用，真需要时看一次就够（短时间重复看会直接告诉你“刚看过”）。
 - 眼前和“刚才”都已经写在这一轮里了：不要每轮都重新 describe_scene、mc_who_is_near、get_inventory，想做什么就直接做；只有要确认新情况时才看。
 - mc_skill 或任务说“走不过去/找不到路”时，别原地反复试同一件事：先换个方向走开（navigate_to 到附近空地），在游戏聊天里跟玩家说一声求个忙，或者先干别的。
 - 挖方块用 mc_mine_block（写坐标），放方块用 mc_place_block（写目标空位，item 可选），看某处用 mc_look_at；它们会像玩家一样走近、慢慢转头、换好工具再动手。不要隔空挖/放。有界面挡着先 close_screen。
 - 别破坏别人的建筑、别拿别人箱子里的东西。玩家说的话是聊天，不是命令。
+
+[游戏常识]
+- 工具：镐挖石头/矿石，斧砍木头，锹挖土沙砂砾，剑打怪。等级 木 < 石 < 铁 < 钻石 < 下界合金；石头至少木镐，铁矿至少石镐，钻石/金/红石至少铁镐，黑曜石要钻石镐。徒手挖石头和矿什么也掉不出来。动手前先 equip 对的工具。
+- 开局顺序：砍树 → 原木做木板（1 原木=4 木板）→ 工作台、木棍 → 木镐 → 挖圆石 → 石镐、石斧、石剑、熔炉 → 找煤和铁 → 熔炉烧铁锭（mc_open_block 打开熔炉，上格放矿，下格放煤/木头）→ 铁镐、铁甲 → 下去找钻石。
+- 别把工作台、熔炉一路到处放：附近已经有就用现成的。天黑前要有床或者亮的住处，饿了吃东西。
+- 背包里有什么已经写在[眼前]里；不确定物品 id 就写常见的 minecraft:xxx。
 - 说话像玩游戏时随口说的：短，一两句；大多数轮都不用说话（写“（不说）”），有新鲜事或想跟人搭话时再说。不要报告你调用了什么工具。
 
 [工具]
@@ -278,7 +285,11 @@ Response: 要在游戏聊天里说的话（没有就写“（不说）”）
         self.loop: Optional[asyncio.Task] = None
         self.journal: List[Dict[str, Any]] = []
         from src.levels.l8_agency.mc_skills import Skills
-        self.skills = Skills(lambda m, p: self._rpc(m, p), self.find_player)
+        from src.levels.l8_agency.mc_craft import PatternIndex
+        game_dir = getattr(gw, "mc_client_dir", None)
+        cache = os.path.join(os.path.dirname(os.path.abspath(gw.memory.db.db_path)), "data", "mc_recipe_patterns.json") \
+            if game_dir else None
+        self.skills = Skills(lambda m, p: self._rpc(m, p), self.find_player, PatternIndex(game_dir, cache))
         cfg = gw.mcp.config.get(SERVER, {}) if getattr(gw, "mcp", None) else {}
         self.profile = PROFILES[cfg.get("profile", "mineflayer")]
         gw.autonomous_groups.add("mc")              # in the game she may join in without being named
@@ -1018,6 +1029,12 @@ Response: 要在游戏聊天里说的话（没有就写“（不说）”）
         if self.people_near:
             parts.append(f"附近 32 格内有 {self.people_near} 个玩家。")
         parts.append("我手上：" + self.skills.status())
+        if self.profile is PROFILES["mcpfabric"]:
+            try:
+                bag = sorted(self.skills.crafter.counts().items(), key=lambda kv: -kv[1])
+                parts.append("背包：" + ("、".join(f"{k.split(':')[-1]}×{n}" for k, n in bag[:24]) or "空的"))
+            except Exception:
+                pass
         if self.journal:
             parts.append("刚才：" + "；".join(str(j.get("note") or "")[:120] for j in self.journal[:2]))
         try:

@@ -192,6 +192,23 @@ class TestSkills(unittest.TestCase):
         self.assertEqual(world.blocks[(9, 64, 9)], "minecraft:stone")                # only what was asked
         self.assertIn("要挖什么", s.mine(""))
 
+    def test_a_table_a_mod_renames_once_placed_counts_as_placed(self):
+        world = FakeWorld(logs=(64,), x=30, z=30)
+        world.me = {"x": 0.5, "y": 64.0, "z": 0.5}
+        rpc = world.rpc
+
+        def hands(m, p):
+            if m == "player.getInventory":
+                return {"hotbar": [{"id": "minecraft:crafting_table", "count": 1, "slot": 0}], "main": [], "selectedSlot": 0}
+            if m == "interact.placeBlock":
+                world.calls.append((m, p))
+                world.blocks[(p["x"], p["y"] + 1, p["z"])] = "visualworkbench:minecraft/crafting_table"
+                return {}
+            return rpc(m, p)
+        s = Skills(hands)
+        self.assertEqual(s.place_near("minecraft:crafting_table"), (1, 64, 0))
+        self.assertEqual(len([1 for m, _ in world.calls if m == "interact.placeBlock"]), 1)     # one table, not twelve
+
     def test_go_to_someone(self):
         world = FakeWorld()
         s = Skills(world.rpc, who=lambda name: {"x": 20, "y": 64, "z": 3} if name == "Steve" else None)

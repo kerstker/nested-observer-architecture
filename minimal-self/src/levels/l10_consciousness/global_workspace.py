@@ -151,6 +151,8 @@ class GlobalWorkspace:
         self.firewall = Firewall(db_path)        # scans what she reads, guards the code she runs, lockdown switch
         self.mcp = None
         self.mcp_trusted = ()
+        self.mc_players = ()          # who in the game chat may give her orders
+        self.game = None              # her body in Minecraft (l8_agency/game.py), when there is one
         self.mcp_steps = 10
         self.workspace_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), "data", "workspace")
         self.inbox_dir = os.path.join(self.workspace_dir, "inbox")       # files people sent her over QQ
@@ -566,6 +568,8 @@ class GlobalWorkspace:
             self._maybe_improve_self(now)
             self._maintainer_tick(now)
             self._maybe_wander(now)
+            if self.game is not None:
+                await self.game.tick(now)
 
             # Level 8: Closed-loop drives choose (or decline) a self-initiated action; goals weigh in
             if now - self.last_action_time >= self.min_action_interval:

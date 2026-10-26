@@ -20,6 +20,7 @@ import fnmatch
 from typing import Any, Dict, Iterable, Optional
 
 OWNER, TRUSTED, AUTONOMOUS, PUBLIC = "owner", "trusted", "autonomous", "public"
+PLAYER = "player"        # someone in the game chat she may take orders from (MC_TRUSTED_PLAYERS): game tools only
 
 # What looking at the web (and following links) needs, and nothing that types, uploads or runs scripts
 BROWSER_READ = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_find", "browser_click",
@@ -69,9 +70,12 @@ class Budget:
         return True
 
 def tier_of(gw, ctx) -> str:
-    if ctx.origin == "autonomous":
+    if ctx.origin in ("autonomous", "game"):
         return AUTONOMOUS
     uid = str(ctx.user_id)
+    if uid.startswith("mc:"):                       # a player in the game chat
+        players = getattr(gw, "mc_players", ()) or ()
+        return PLAYER if ("*" in players or uid[3:] in players) else PUBLIC
     if ctx.group_id is None:
         if uid == "console" or (getattr(gw, "evolve_creator", None) and uid == str(gw.evolve_creator)):
             return OWNER

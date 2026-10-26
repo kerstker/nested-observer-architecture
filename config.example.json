@@ -30,5 +30,12 @@
   "WANDER_ENABLED": false,
   "WANDER_PER_DAY": 3,
   "WANDER_STEPS": 10,
-  "WANDER_GAP_MINUTES": 120
+  "WANDER_GAP_MINUTES": 120,
+  "MC_ENABLED": false,
+  "MC_HOST": "localhost",
+  "MC_PORT": 25565,
+  "MC_USERNAME": "Noa",
+  "MC_NAMES": ["乃爱", "Noa"],
+  "MC_TRUSTED_PLAYERS": [],
+  "MC_PLAY_PER_HOUR": 6
 }

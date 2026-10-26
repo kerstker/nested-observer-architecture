@@ -311,6 +311,7 @@ def create_console_router(gw, token: str = None) -> APIRouter:
                  "tiers": [tier for tier in (access.OWNER, access.TRUSTED, access.AUTONOMOUS)
                            if access.allowed(hub.config.get(t["server"], {}), tier, t["name"])]} for t in tools],
             "trusted": list(gw.mcp_trusted), "wander": dict(gw.wander), "wandering": gw.wandering,
+            "game": gw.game.status() if gw.game else None,
             "journal": gw.wander_log[:10]})
 
     @router.get("/api/firewall")

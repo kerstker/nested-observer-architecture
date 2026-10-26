@@ -479,10 +479,10 @@ const FOCUS = { user_message: "有人在和她说话", hunger: "饥饿", social:
                 ignored: "被冷落", answer_surprise: "意外的回应", association: "回忆", gap: "意识中断", inner_speech: "自己的念头",
                 self_surprise: "对自己的意外" };
 const CHOICE = { spoke: "开口", silent: "沉默", consider: "犹豫", asleep: "睡着", woken: "被吵醒", muted: "被叫安静",
-                 feedback: "反馈", caught_up: "补看消息", noticed: "察觉", left: "离开", away: "已离开", limit: "上限", intend: "想做", attend: "收回注意", metacog: "元认知", goal: "目标", improve: "自我改进", browse: "自己上网", evolved: "改造结果", tools: "用工具", task: "任务" };
+                 feedback: "反馈", caught_up: "补看消息", noticed: "察觉", left: "离开", away: "已离开", limit: "上限", intend: "想做", attend: "收回注意", metacog: "元认知", goal: "目标", improve: "自我改进", browse: "自己上网", play: "玩游戏", evolved: "改造结果", tools: "用工具", task: "任务" };
 const CHOICE_CLASS = { spoke: "src-perception", silent: "src-inner_speech", consider: "src-needs", asleep: "src-memory",
                        woken: "src-prediction", muted: "src-prediction", feedback: "src-self_model", caught_up: "src-continuity",
-                       noticed: "src-self_model", left: "src-memory", away: "src-memory", limit: "src-prediction", intend: "src-needs", attend: "src-self_model", metacog: "src-self_model", goal: "src-needs", improve: "src-self_model", browse: "src-needs", evolved: "src-self_model", tools: "src-continuity", task: "src-needs" };
+                       noticed: "src-self_model", left: "src-memory", away: "src-memory", limit: "src-prediction", intend: "src-needs", attend: "src-self_model", metacog: "src-self_model", goal: "src-needs", improve: "src-self_model", browse: "src-needs", play: "src-needs", evolved: "src-self_model", tools: "src-continuity", task: "src-needs" };
 // Which direction of change is good for her: more joy is good, more of a negative emotion is bad
 function causeClass(variable, delta) {
   if (variable === "surprise") return "src-perception";

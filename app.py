@@ -326,10 +326,20 @@ if config.get('MCP_ENABLED'):
                 c["cwd"] = c["cwd"] if os.path.isabs(c["cwd"]) else os.path.join(root_dir, c["cwd"])
                 os.makedirs(c["cwd"], exist_ok=True)
             servers[name] = c
+        if config.get('MC_ENABLED'):
+            from src.levels.l8_agency.game import minecraft_server
+            servers['minecraft'] = minecraft_server(config.get('MC_HOST', 'localhost'), int(config.get('MC_PORT', 25565)),
+                                                    config.get('MC_USERNAME', 'Noa'))
         hub = McpHub(servers, root_dir)
         hub.start_all()
         global_workspace.mcp = hub
         global_workspace.mcp_trusted = tuple(str(u) for u in (config.get('MCP_TRUSTED_USERS') or []))
+        if 'minecraft' in servers:
+            from src.levels.l8_agency.game import GameBridge
+            global_workspace.mc_players = tuple(str(p) for p in (config.get('MC_TRUSTED_PLAYERS') or []))
+            global_workspace.game = GameBridge(global_workspace, config.get('MC_USERNAME', 'Noa'),
+                                               names=tuple(config.get('MC_NAMES') or ('乃爱', 'Noa')),
+                                               play_per_hour=int(config.get('MC_PLAY_PER_HOUR', 6)))
         global_workspace.file_read_roots += list(config.get('FILE_READ_ROOTS') or [])
         global_workspace.file_write_roots += list(config.get('FILE_WRITE_ROOTS') or [])
         global_workspace.wander.update({

@@ -43,6 +43,7 @@ from ...levels.l9_narrative.narrative import NarrativeSelf
 from ...levels.l9_narrative.style_anchors import StyleAnchors
 from ...levels.l7_tom.subtext import SubtextReader
 from ...levels.l17_self_improvement.maintainer import Maintainer
+from ...levels.l8_agency.firewall import Firewall
 from ...levels.l17_self_improvement.code_interpreter import CodeInterpreter
 from ...levels.l17_self_improvement.diagnosis import SelfDiagnosis
 from ...levels.l18_knowledge.knowledge_base import KnowledgeBase
@@ -147,6 +148,7 @@ class GlobalWorkspace:
         # What she asks of the person who maintains her (see l17_self_improvement/maintainer.py)
         self.maintainer = Maintainer(db_path)
         # Outside tools (a real browser through MCP, her own folder): who may use them is in l8_agency/access.py
+        self.firewall = Firewall(db_path)        # scans what she reads, guards the code she runs, lockdown switch
         self.mcp = None
         self.mcp_trusted = ()
         self.mcp_steps = 10
@@ -2976,7 +2978,7 @@ Response: 一段手记：这次看了什么、有什么有意思的（100 字以
 
     def _maybe_wander(self, now: float):
         w = self.wander
-        if (not w["enabled"] or self.wandering or self.mcp is None or not self.inference_engine
+        if (not w["enabled"] or self.wandering or self.mcp is None or not self.inference_engine or self.firewall.locked
                 or self.metabolism.is_sleeping or self.metabolism.energy < 35
                 or self.homeostasis.curiosity_need < w["curiosity"] or now - self.last_wander < w["gap"]):
             return
@@ -3146,7 +3148,7 @@ Response: 一段手记：这次看了什么、有什么有意思的（100 字以
     def _finalize_response(self, response: str) -> str:
         """Clean the model's text into what she actually says: no tool syntax, no stage directions."""
         import re
-        final_response = response.strip()
+        final_response = self.firewall.redact(response.strip())        # no key or token ever leaves in what she says
 
         # Remove any lingering tool actions from user-facing text (SEARCH/RECALL/MEMORIZE/EXECUTE_CODE)
         final_response = re.sub(r'Action:\s*EXECUTE_CODE.*?```(?:python)?.*?```', '', final_response, flags=re.DOTALL).strip()

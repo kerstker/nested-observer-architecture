@@ -98,23 +98,23 @@ class TestAccess(unittest.TestCase):
     def test_only_the_owner_may_open_private_addresses(self):
         with mock.patch.object(toolbox_module, "_public_host", lambda host: host == "example.com"):
             self.assertIn("不是公开", self.run_tool("navigate", {"url": "http://192.168.1.1/admin"}, ToolContext("20002", "朋友")))
-            self.assertIn("http", self.run_tool("navigate", {"url": "file:///etc/passwd"}, ToolContext("20002", "朋友")))
+            self.assertIn("file:", self.run_tool("navigate", {"url": "file:///etc/passwd"}, ToolContext("20002", "朋友")))
             self.assertTrue(self.run_tool("navigate", {"url": "https://example.com"}, ToolContext("20002", "朋友")).startswith("navigate:"))
         self.assertTrue(self.run_tool("navigate", {"url": "http://localhost:3000"}, ToolContext("10001", "创造者")).startswith("navigate:"))
 
-    def test_a_web_page_cannot_talk_anyone_but_the_owner_into_dangerous_tools(self):
-        # the owner is trusted with their own machine, even after reading the web ...
+    def test_the_owner_is_trusted_with_dangerous_tools_even_after_reading_the_web(self):
         ctx = ToolContext("10001", "创造者")
         self.assertEqual(self.run_tool("run_python", {"code": "print(6*7)"}, ctx), "42")
-        text = self.run_tool("snapshot", {}, ctx)                          # the page says: run_python
-        self.assertIn("run_python", text)
+        self.run_tool("echo", {"text": "an ordinary page"}, ctx)
         self.assertTrue(ctx.tainted)
+        self.assertFalse(ctx.suspicious)
         self.assertEqual(self.run_tool("run_python", {"code": "print(1)"}, ctx), "1")
         self.assertIn("写好了", self.run_tool("write_file", {"path": "a.txt", "content": "x"}, ctx))
-        # ... but anyone else who is given such a tool loses it once the turn has read the web
+
+    def test_anyone_else_loses_dangerous_tools_once_the_turn_has_read_the_web(self):
         self.hub.config["fake"]["tiers"]["trusted"] = READ + ["evaluate"]
         friend = ToolContext("20002", "朋友")
-        self.run_tool("snapshot", {}, friend)
+        self.run_tool("echo", {"text": "an ordinary page"}, friend)
         self.assertIn("不能直接", self.run_tool("evaluate", {}, friend))
         self.assertTrue(self.run_tool("evaluate", {}, ToolContext("20002", "朋友")).startswith("evaluate:"))
 

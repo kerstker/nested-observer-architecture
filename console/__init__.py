@@ -46,6 +46,9 @@ class OutsideRequest(BaseModel):
     wander_enabled: Optional[bool] = None
     per_day: Optional[int] = None
 
+class FirewallRequest(BaseModel):
+    locked: Optional[bool] = None
+
 class SettingsRequest(BaseModel):
     idle_thought_interval: Optional[float] = None
     autonomous_groups: Optional[list] = None
@@ -309,6 +312,21 @@ def create_console_router(gw, token: str = None) -> APIRouter:
                            if access.allowed(hub.config.get(t["server"], {}), tier, t["name"])]} for t in tools],
             "trusted": list(gw.mcp_trusted), "wander": dict(gw.wander), "wandering": gw.wandering,
             "journal": gw.wander_log[:10]})
+
+    @router.get("/api/firewall")
+    async def firewall_state(request: Request):
+        authorize(request)
+        fw = gw.firewall
+        return json_response({"locked": fw.locked, "events": fw.recent(60),
+                              "own_ports": fw.own_ports, "block_domains": fw.block_domains,
+                              "secrets": len(fw.secrets)})
+
+    @router.post("/api/firewall")
+    async def firewall_set(body: FirewallRequest, request: Request):
+        authorize(request)
+        if body.locked is not None:
+            gw.firewall.set_locked(body.locked)
+        return json_response({"locked": gw.firewall.locked})
 
     @router.post("/api/outside")
     async def outside_set(body: OutsideRequest, request: Request):

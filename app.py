@@ -303,6 +303,15 @@ if config.get('EVOLVE_ENABLED'):
     except Exception as e:
         logger.error(f"[Evolve] 初始化失败，改造通道保持关闭：{e}")
 
+# The firewall: secrets are never repeated, her own services cannot be reached from tools, domains can be blocked
+_secrets = [str(v) for k, v in config.items() if any(w in k.upper() for w in ('KEY', 'TOKEN', 'SECRET', 'PASSWORD'))
+            and isinstance(v, str) and len(v) >= 8]
+_secrets += [v for k, v in os.environ.items() if any(w in k.upper() for w in ('API_KEY', 'TOKEN', 'SECRET')) and len(v) >= 8]
+global_workspace.firewall.secrets = sorted(set(_secrets), key=len, reverse=True)
+global_workspace.firewall.own_ports = [int(p) for p in (config.get('FIREWALL_OWN_PORTS') or
+                                                         [config.get('PORT', 8080), 3000, 3001, 6099, 6185])]
+global_workspace.firewall.block_domains = [str(d).lower() for d in (config.get('FIREWALL_BLOCK_DOMAINS') or [])]
+
 # Level 8: hands outside the house - a real browser (and any other MCP server) she can use. Who may use it is
 # decided in src/levels/l8_agency/access.py; in her own free time she may also go and look at things herself.
 if config.get('MCP_ENABLED'):

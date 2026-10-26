@@ -327,6 +327,10 @@
       <div class="muted" id="outside-meta" style="margin-bottom:8px"></div>
       <div class="controls"><button type="button" id="wander-toggle"></button></div>
       <ul class="list" id="outside-tools" style="margin-top:10px;max-height:260px"></ul>
+      <h3 style="margin-top:12px">防火墙</h3>
+      <div class="muted" id="fw-meta" style="margin-bottom:8px"></div>
+      <div class="controls"><button type="button" id="fw-toggle"></button></div>
+      <ul class="list" id="fw-events" style="margin-top:10px;max-height:260px"></ul>
       <h3 style="margin-top:12px">她自己上网逛的手记</h3>
       <ul class="list" id="wander-journal" style="max-height:300px"></ul>
     </section>
@@ -990,6 +994,24 @@ loaders.improve = async () => {
   }), "还没有提案");
   await loaders.asks();
   await loaders.outside();
+  await loaders.firewall();
+};
+const FW_KIND = { injection: "网页/文件里有人对 AI 下命令", code: "代码", url: "网址", path: "受保护的位置", suspicious: "可疑之后的动作",
+                   lockdown: "紧急封锁", write: "写文件", call: "调用" };
+loaders.firewall = async () => {
+  const f = await api("firewall");
+  $("fw-meta").textContent = (f.locked ? "【紧急封锁中：所有外部工具都停用了】 " : "运行中 · ") +
+    `她自己的服务端口 ${f.own_ports.join("/")} 不能从浏览器或脚本碰 · 已登记要隐藏的密钥 ${f.secrets} 个` +
+    (f.block_domains.length ? ` · 封锁网站：${f.block_domains.join("、")}` : "");
+  $("fw-toggle").textContent = f.locked ? "解除紧急封锁" : "紧急封锁（停用所有外部工具）";
+  $("fw-toggle").onclick = async () => {
+    if (!f.locked && !confirm("封锁后，她的浏览器、跑代码、读写文件都会停用，直到你解除。确定？")) return;
+    await api("firewall", { locked: !f.locked }); loaders.firewall();
+  };
+  fill("fw-events", (f.events || []).filter((e) => e.action !== "allowed" || e.kind === "code").slice(0, 30).map((e) =>
+    el("li", {}, el("span", { class: "chip " + (e.action === "blocked" ? "neg" : e.action === "flagged" ? "src-needs" : "pos") }, e.action === "blocked" ? "拦下" : e.action === "flagged" ? "警告" : "放行"),
+      el("span", { class: "tag" }, `${FW_KIND[e.kind] || e.kind} · ${e.tool || ""} · ${e.tier || ""}`),
+      el("div", { class: "muted" }, e.detail), el("div", { class: "when" }, ago(e.t)))), "还没有拦截记录");
 };
 const TIER_WORDS = { owner: "创造者", trusted: "受信任的人", autonomous: "她自己的空闲时间" };
 loaders.outside = async () => {

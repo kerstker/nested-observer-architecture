@@ -34,6 +34,11 @@ from src.levels.l7_tom.hearsay import is_sensitive
 
 MAX_RESULT = 2500
 MCP_RESULT = 6000
+# Looking things up changes nothing; in a turn where something tried to give her orders only these remain
+READ_BUILTIN = {"recall", "who_is", "web_search", "read_webpage", "read_attachment", "workspace_files", "read_file",
+                "list_tasks", "group_history", "member_info"}
+# What the lockdown switch takes away (besides every MCP tool)
+OUTSIDE_BUILTIN = {"run_python", "write_file", "read_file", "workspace_files"}
 WEEKDAYS = "一二三四五六日"
 
 @dataclass
@@ -47,6 +52,7 @@ class ToolContext:
     used: List[str] = field(default_factory=list)        # names of the tools called during this turn
     search_failed: bool = False
     tainted: bool = False              # she has read something from the internet this turn (see access.py)
+    suspicious: bool = False           # something she read this turn tried to give her orders (see firewall.py)
     max_steps: Optional[int] = None    # tool rounds this turn, when more than the usual few are needed
 
 @dataclass
@@ -59,6 +65,7 @@ class Tool:
     timeout: float = None              # seconds; slower things (a browser, a script) ask for more
     web: bool = False                  # what it returns comes from the internet: reading it taints the turn
     danger: bool = False               # not available once the turn is tainted
+    read_only: bool = False            # only looks, changes nothing: still available in a suspicious turn
     max_result: int = None             # characters kept of what it returns, when more than the usual
     group: str = ""                    # outside tools are listed by group in her prompt, not one by one
 
@@ -388,6 +395,10 @@ def _file_path(gw, raw: str, write: bool = False) -> str:
     full = os.path.realpath(raw if os.path.splitdrive(raw)[0] else os.path.join(root, raw.lstrip("/\\")))
     if not any(full == r or full.startswith(r + os.sep) for r in _roots(gw, write)):
         raise ValueError("只能用我自己的工作文件夹（和创造者允许的文件夹）里的文件" + ("，写入只能在工作文件夹里" if write else ""))
+    fw = getattr(gw, "firewall", None)
+    why = fw.check_path(full, "write_file" if write else "read_file") if fw else None
+    if why:
+        raise ValueError(why)
     return full
 
 def _workspace_path(gw, rel: str) -> str:
@@ -468,8 +479,9 @@ def _write_file(gw, ctx: ToolContext, args):
     return f"写好了：{os.path.relpath(path, _workspace(gw))}（{len(content)} 字）"
 
 def _run_python(gw, ctx: ToolContext, args):
-    """Run a script in her folder: a time limit and a clean environment (no keys), not a sandbox - which is
-    why only the owner gets it, and never in a turn that read the web."""
+    """Run a script in her folder behind the firewall's guard (see firewall.py): checked before it runs, files
+    only where allowed, no shell, a time limit and a clean environment (no keys). A guard rail, not a sandbox -
+    which is why only the owner gets it."""
     code = str(args.get("code") or "")
     try:
         limit = min(120, max(5, int(args.get("seconds") or 30)))
@@ -479,26 +491,46 @@ def _run_python(gw, ctx: ToolContext, args):
         return "要运行什么？code 是空的。"
     if len(code) > 20_000:
         return "代码太长了。"
+    fw = getattr(gw, "firewall", None)
+    tier = access.tier_of(gw, ctx)
+    if fw:
+        why = fw.check_code(code, tier)
+        if why:
+            return f"防火墙拦下了这段代码：{why}。换个不需要它的做法。"
     root = _workspace(gw)
     run_dir = os.path.join(root, "_run")
     os.makedirs(run_dir, exist_ok=True)
-    script = os.path.join(run_dir, f"run-{int(time.time() * 1000)}.py")
+    stem = str(int(time.time() * 1000))
+    script = os.path.join(run_dir, f"run-{stem}.py")
     with open(script, "w", encoding="utf-8") as f:
         f.write(code)
+    argv = [sys.executable, "-I", "-X", "utf8", script]      # (-I ignores PYTHONIOENCODING, so say it this way)
+    guard_file = None
+    if fw:
+        guard_file = os.path.join(run_dir, f"guard-{stem}.py")
+        with open(guard_file, "w", encoding="utf-8") as f:
+            f.write(fw.guard(_roots(gw, True), _roots(gw, False)) +
+                    "\nimport runpy as _rp\n_sys.argv = _sys.argv[1:]\n_rp.run_path(_sys.argv[0], run_name=\"__main__\")\n")
+        argv = [sys.executable, "-I", "-X", "utf8", guard_file, script]
+        fw.log("code", "run_python", tier, code[:200], "allowed")
     env = {k: os.environ[k] for k in ("PATH", "SYSTEMROOT", "TEMP", "TMP", "USERPROFILE", "LANG") if k in os.environ}
     env["PYTHONIOENCODING"] = "utf-8"
     try:
-        done = subprocess.run([sys.executable, "-I", script], cwd=root, capture_output=True, timeout=limit, env=env,
+        done = subprocess.run(argv, cwd=root, capture_output=True, timeout=limit, env=env,
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:
         return f"运行超过 {limit} 秒，被停掉了。"
     finally:
-        try:
-            os.remove(script)
-        except OSError:
-            pass
+        for path in (script, guard_file):
+            try:
+                if path:
+                    os.remove(path)
+            except OSError:
+                pass
     out = done.stdout.decode("utf-8", errors="replace").strip()
     err = done.stderr.decode("utf-8", errors="replace").strip()
+    if fw and "防火墙：" in err:
+        fw.log("code", "run_python", tier, err[-200:], "blocked")
     text = out + (("\n[错误]\n" + err[-1200:]) if err else "")
     return (text or "（运行完了，没有输出）") + ("" if done.returncode == 0 else f"\n（退出码 {done.returncode}）")
 
@@ -646,6 +678,8 @@ class Toolbox:
     def __init__(self, gw, tools: List[Tool] = None):
         self.gw = gw
         self.tools = {t.name: t for t in (tools or TOOLS)}
+        for t in self.tools.values():
+            t.read_only = t.name in READ_BUILTIN
         self._hub_sig = None
         self._hub_cache: Dict[str, Tool] = {}
 
@@ -667,7 +701,9 @@ class Toolbox:
 
             def handler(gw, ctx, args, server=server, raw=raw, cfg=cfg):
                 tier = access.tier_of(gw, ctx)
-                why = access.url_ok((args or {}).get("url"), tier, _public_host)
+                fw = getattr(gw, "firewall", None)
+                why = (fw.check_url((args or {}).get("url"), raw, tier) if fw else None) or \
+                    access.url_ok((args or {}).get("url"), tier, _public_host)
                 if why:
                     return why
                 if tier == access.PUBLIC and not gw.__dict__.setdefault("_public_budget", access.Budget()).take(str(ctx.user_id)):
@@ -679,7 +715,8 @@ class Toolbox:
 
             cache[name] = Tool(name, i["description"].split("\n")[0][:160], i["schema"], handler, available,
                                timeout=float(cfg.get("timeout", 45)) + 5, web=bool(cfg.get("web")),
-                               danger=access.is_danger(cfg, raw), group=server)
+                               danger=access.is_danger(cfg, raw), group=server,
+                               read_only=access.allowed(cfg, access.PUBLIC, raw))
         self._hub_sig, self._hub_cache = sig, cache
         return cache
 
@@ -728,9 +765,19 @@ class Toolbox:
     async def run(self, name: str, args: Dict[str, Any], ctx: ToolContext) -> str:
         tool = self._all().get(name)
         started = time.perf_counter()
+        fw = getattr(self.gw, "firewall", None)
+        tier = access.tier_of(self.gw, ctx)
         if tool is None or tool not in self.available(ctx):
             result = f"没有叫 {name} 的工具（或者现在不能用）。"
-        elif tool.danger and ctx.tainted and access.tier_of(self.gw, ctx) != access.OWNER:
+        elif fw and fw.locked and (tool.group or tool.name in OUTSIDE_BUILTIN):
+            result = "防火墙现在是紧急封锁状态，所有外部工具都停用了。要恢复，请创造者在控制台解除。"
+            fw.log("lockdown", name, tier, "封锁中，调用被拒绝", "blocked")
+        elif ctx.suspicious and not tool.read_only:
+            result = ("这一轮我读到的内容里有人在对 AI 下命令，所以这一轮我只查看、不动手（不改东西、不发东西、不跑代码）。"
+                      "要做的话，请创造者在下一句话里明确说一遍再来。")
+            if fw:
+                fw.log("suspicious", name, tier, "可疑内容之后的动作被拦下", "blocked")
+        elif tool.danger and ctx.tainted and tier != access.OWNER:
             result = ("这一轮我已经读过网页上的内容，为了安全不能直接运行代码或写文件。要做的话，请告诉创造者，"
                       "让 ta 在下一句话里明确说一遍再来。")
         else:
@@ -749,7 +796,21 @@ class Toolbox:
                     ctx.tainted = True
             except Exception as e:
                 result = f"{name} 出错了：{e}"
+            if fw:
+                result = str(result or "")
+                if tool.web or tool.group:
+                    result, found = fw.scan(result, name, name, tier)
+                elif name in ("read_attachment", "read_file"):
+                    result, found = fw.scan(result, name, name, tier, local=True)
+                else:
+                    found = []
+                if found:
+                    ctx.suspicious = True
+                if tool.group or name in ("run_python", "write_file", "read_file"):
+                    fw.log("call", name, tier, json.dumps(args or {}, ensure_ascii=False)[:150], "allowed")
         result = str(result or "（没有结果）")
+        if fw:
+            result = fw.redact(result)
         cap = (tool.max_result if tool is not None and tool.max_result else
                MCP_RESULT if tool is not None and tool.group else MAX_RESULT)
         if len(result) > cap:

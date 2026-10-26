@@ -27,7 +27,7 @@
 
 ```bash
 cd minimal-self
-python -m pytest -q          # 357 个测试，约 4 分钟，不需要 API Key / 网络
+python -m pytest -q          # 416 个测试，约 7 分钟，不需要 API Key / 网络
 ```
 
 测试是 unittest 风格，pytest 只是 runner；没有 pytest 时 `python -m unittest` 也可以。

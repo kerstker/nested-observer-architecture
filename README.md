@@ -7,7 +7,7 @@
 
 [![license](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.11%2B-3776ab.svg)](#快速开始)
-[![tests](https://img.shields.io/badge/tests-357%20passing-brightgreen.svg)](minimal-self/tests)
+[![tests](https://img.shields.io/badge/tests-416%20passing-brightgreen.svg)](minimal-self/tests)
 [![CI](https://github.com/kerstker/nested-observer-architecture/actions/workflows/tests.yml/badge.svg)](https://github.com/kerstker/nested-observer-architecture/actions/workflows/tests.yml)
 
 > 开源的目的一句话：**架构可以借**。
@@ -18,7 +18,7 @@
 
 ## 为什么值得读
 
-1. **分层，但不是状态机。** L1–L10 每一层都能单独测试（357 个测试，无网络、无 API Key 也能跑）；
+1. **分层，但不是状态机。** L1–L10 每一层都能单独测试（416 个测试，无网络、无 API Key 也能跑）；
    L10 的 `global_workspace.py` 只做编排，不偷偷实现业务。
 2. **注意力是一个"槽位"，不是全量拼接。** 每个输入先变成候选刺激，按显著度竞争同一个工作区；
    赢的那个才进入这一轮意识。这是她和"把所有上下文塞进 prompt"的机器人在行为上分道扬镳的地方。
@@ -205,7 +205,7 @@ python -m pytest -q
 | `minimal-self/src/levels/l1…l10` | 感知/记忆/代谢/情绪/价值/稳态/ToM/行动/叙事/意识 |
 | `minimal-self/src/levels/l17…l19` | 自我改进（含维护请求）、知识库、搜索 |
 | `minimal-self/src/evaluation/` | 15 个行为场景与仿真器（脚本化时钟：一周几分钟跑完） |
-| `minimal-self/tests/` | 357 个测试（含假 MCP / 假游戏服务器） |
+| `minimal-self/tests/` | 416 个测试（含假 MCP / 假游戏服务器） |
 | `scripts/` | 维护请求、评估审计、改造提案、备份恢复、感知服务 |
 | `docs/` | 架构文档 + 四张由脚本生成的 SVG |
 | `AGENTS.md` | 给维护智能体的工作协议（人机协作的接口约定） |
@@ -214,7 +214,7 @@ python -m pytest -q
 
 | 工具 | 测什么 |
 |---|---|
-| `minimal-self/tests`（357 个） | 行为、记忆、情绪、工具权限、防火墙（含真实跑脚本）、文档解析、游戏、维护通道… |
+| `minimal-self/tests`（416 个） | 行为、记忆、情绪、工具权限、防火墙（含真实跑脚本）、文档解析、游戏、维护通道… |
 | `scripts/evaluate_life.py` | 15 个行为场景（脚本化模型，测机制） |
 | `scripts/evaluate_quality.py` | 真实模型 + 真实记忆副本，评审打分（自然 / 符合预期 / 诚实） |
 | `scripts/audit_tone.py` | 情商：重放真实消息，评审打 EQ / 带刺 / 个性，前后对比 |

@@ -184,6 +184,13 @@ class TestMcpfabric(unittest.TestCase):
             {"id": 10, "type": "chat", "data": {"player": "Bob", "text": "server side"}}]})
         self.assertEqual(parse_events(text), [("7", "Steve", "乃爱 来"), ("9", "Alex", "hi"), ("10", "Bob", "server side")])
         self.assertEqual(parse_events("出错了：bridge not reachable"), [])
+        # what a "no chat reports" server really sends (seen on the friends' server)
+        real = json.dumps({"messages": [
+            {"id": 3, "type": "system_message", "data": {"text": "<kerst_ker> noa你在吗？", "overlay": False}},
+            {"id": 4, "type": "system_message", "data": {"text": "你的游戏模式已被更新为创造模式", "overlay": False}},
+            {"id": 5, "type": "system_message", "data": {"text": "JusticeedGen取得了进度[怪物猎人]", "overlay": False}},
+            {"id": 6, "type": "system_message", "data": {"text": "<x> action bar", "overlay": True}}]})
+        self.assertEqual(parse_events(real), [("3", "kerst_ker", "noa你在吗？")])
 
     def test_she_hears_and_answers_through_the_mod(self):
         def poll():

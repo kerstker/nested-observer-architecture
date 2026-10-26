@@ -75,9 +75,13 @@ def parse_events(text: str) -> List[Tuple[str, str, str]]:
         return []
     out = []
     for ev in data.get("messages") or []:
-        if ev.get("type") != "chat":
-            continue                                   # system messages (joins, deaths) are not someone talking
         d = ev.get("data") or {}
+        if ev.get("type") != "chat":
+            # Servers with "no chat reports" send player chat as system messages ("<name> text"); anything else
+            # there (joins, deaths, advancements) is not someone talking
+            if ev.get("type") != "system_message" or d.get("overlay") or not re.match(r"^<[^>]+>", str(d.get("text") or "")):
+                continue
+            d = {"text": d.get("text")}
         player = str(d.get("sender") or d.get("player") or "").strip()
         said = str(d.get("text") or "").strip()
         if not player:
@@ -236,6 +240,7 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
         self.last_chat = now
         gw = self.gw
         uid = f"mc:{player}"
+        logger.info(f"[Game] {player}: {said[:80]}")
         gw.memory.add_user_profile(uid, uid, player)
         reply = await gw.hear(said, user_id=uid, nickname=player, group_id="mc", addressed=self.addressed(said))
         if reply and not gw._is_silence(reply):

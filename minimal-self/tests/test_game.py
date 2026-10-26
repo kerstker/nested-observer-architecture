@@ -280,6 +280,25 @@ class TestMcpfabric(unittest.TestCase):
         self.gw.mc_bridge = (f"http://127.0.0.1:{server.server_port}", "t")
         return calls
 
+    def test_she_sees_who_is_near_by_name(self):
+        self._bridge([{"uuid": GameBridge.offline_uuid("Steve"), "type": "minecraft:player", "x": 1, "y": 64, "z": 1, "distance": 3.2},
+                      {"uuid": GameBridge.offline_uuid("Stranger"), "type": "minecraft:player", "x": 9, "y": 64, "z": 1, "distance": 9},
+                      {"uuid": GameBridge.offline_uuid("Noa"), "type": "minecraft:player", "x": 0, "y": 64, "z": 0, "distance": 0},
+                      {"uuid": "x", "type": "minecraft:pig", "distance": 5}, {"uuid": "y", "type": "minecraft:pig", "distance": 6}])
+        self.game.known_players.add("Steve")
+        text = asyncio.run(self.gw.toolbox.run("mc_who_is_near", {}, ToolContext("mc:Steve", "Steve", "mc")))
+        self.assertIn("Steve（3 格）", text)
+        self.assertIn("一个不认识的玩家", text)
+        self.assertNotIn("Noa", text)
+        self.assertIn("pig×2", text)
+
+    def test_her_reply_is_the_only_way_her_words_go_out(self):
+        names = {t.name for t in self.gw.toolbox.available(ToolContext("self", "乃爱", origin="game"))}
+        self.assertNotIn("send_chat", names)                                 # (it said everything twice)
+        self.assertFalse({"list_players", "get_status"} & names)             # (they made her think she was offline)
+        self.assertEqual(split_for_chat("好呀[表情:117]"), ["好呀"])
+        self.assertEqual(split_for_chat("[表情:117]"), [])
+
     def test_offline_uuids_match_what_the_server_gives(self):
         # JusticeedGen's player entity as seen on the friends' offline-mode server
         self.assertEqual(GameBridge.offline_uuid("JusticeedGen"), "fc72b067-3595-319a-8f41-36e32a4eb47b")

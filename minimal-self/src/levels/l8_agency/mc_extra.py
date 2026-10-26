@@ -73,6 +73,10 @@ def tools():
             return game.set_follow(None)
         return game.set_follow(who, float(a.get("minutes") or 20))
 
+    def near(gw, ctx, a):
+        game = getattr(gw, "game", None)
+        return game.who_is_near(float(a.get("radius") or 48)) if game is not None else "游戏身体没有连上。"
+
     def common(**kw):
         return dict(available=_available, timeout=15, group=SERVER, **kw)
 
@@ -88,6 +92,8 @@ def tools():
                     count=_i("最多几个")), transfer, **common()),
         Tool("mc_recipes", "查几样物品的合成配方（返回能用来合成的 ref）。",
              _props(["items"], items=_s("物品 id，逗号分隔，比如 minecraft:crafting_table")), recipes, **common(read_only=True)),
+        Tool("mc_who_is_near", "看看身边有哪些玩家（叫得出名字的会写名字、多远）和哪些生物。",
+             _props(radius=_i("多远以内，默认 48 格")), near, **common(read_only=True)),
         Tool("mc_follow", "跟着某个玩家走（身体会自己跟上、看着 ta，直到你说停或者时间到）；player 写 stop 就不跟了。",
              _props(["player"], player=_s("玩家名，或 stop"), minutes=_i("最多跟多久（分钟），默认 20")), follow, **common()),
         Tool("mc_craft", "在打开的工作台（或背包合成格）里按配方摆好材料，然后从结果格拿走。",

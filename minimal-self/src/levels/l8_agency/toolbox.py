@@ -740,7 +740,8 @@ class Toolbox:
 
     def specs(self, ctx: ToolContext) -> List[Dict[str, Any]]:
         tools = self.available(ctx)
-        if any(t.group for t in tools):                    # browsing takes more rounds than looking something up
+        if ctx.origin != "game" and any(t.group for t in tools):   # browsing takes more rounds than looking something up
+                                                                    # (a game turn stays short: the next one comes right after)
             ctx.max_steps = max(ctx.max_steps or 0, getattr(self.gw, "mcp_steps", 10))
         return [{"type": "function", "function": {"name": t.name, "description": t.description,
                                                   "parameters": t.parameters}} for t in tools]

@@ -348,7 +348,7 @@ if config.get('MCP_ENABLED'):
             global_workspace.mc_players = tuple(str(p) for p in (config.get('MC_TRUSTED_PLAYERS') or []))
             global_workspace.game = GameBridge(global_workspace, config.get('MC_USERNAME', 'Noa'),
                                                names=tuple(config.get('MC_NAMES') or ('乃爱', 'Noa')),
-                                               play_per_hour=int(config.get('MC_PLAY_PER_HOUR', 30)))
+                                               play_per_hour=int(config.get('MC_PLAY_PER_HOUR', 600)))
         global_workspace.file_read_roots += list(config.get('FILE_READ_ROOTS') or [])
         global_workspace.file_write_roots += list(config.get('FILE_WRITE_ROOTS') or [])
         global_workspace.wander.update({

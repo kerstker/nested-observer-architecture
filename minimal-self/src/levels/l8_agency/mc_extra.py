@@ -14,7 +14,8 @@ from src.levels.l8_agency import access
 
 SERVER = "minecraft"
 
-def call_bridge(gw, method: str, params: Dict[str, Any] = None, timeout: float = 10.0) -> str:
+def call_bridge(gw, method: str, params: Dict[str, Any] = None, timeout: float = 10.0, limit: int = 5000) -> str:
+    """The bridge's answer as JSON text, cut to `limit` characters for a model (0: whole, for code that parses it)."""
     url, token = getattr(gw, "mc_bridge", (None, None))
     if not url:
         return "游戏身体没有连上。"
@@ -28,7 +29,8 @@ def call_bridge(gw, method: str, params: Dict[str, Any] = None, timeout: float =
     if not out.get("ok", True) or "error" in out:
         err = out.get("error") or {}
         return "出错了：" + str(err.get("message") if isinstance(err, dict) else err)
-    return json.dumps(out.get("result", out), ensure_ascii=False)[:5000]
+    text = json.dumps(out.get("result", out), ensure_ascii=False)
+    return text[:limit] if limit else text
 
 def _available(gw, ctx) -> bool:
     hub = getattr(gw, "mcp", None)
@@ -77,6 +79,31 @@ def tools():
         game = getattr(gw, "game", None)
         return game.who_is_near(float(a.get("radius") or 48)) if game is not None else "游戏身体没有连上。"
 
+    def skill(gw, ctx, a):
+        game = getattr(gw, "game", None)
+        if game is None:
+            return "游戏身体没有连上。"
+        name = str(a.get("name") or "").strip()
+        if name == "stop":
+            return game.skills.stop()
+        if name == "status":
+            return game.skills.status()
+        args = {"player": str(a["player"])} if name == "go_to_player" and a.get("player") else {}
+        return game.skills.start(name, **args)
+
+    def find(gw, ctx, a):
+        ids = [s.strip() for s in str(a.get("blocks") or "").split(",") if s.strip()]
+        if not ids:
+            return "要找什么方块？比如 minecraft:oak_log"
+        # (the scan radius is in chunks of 16 blocks; the tool speaks blocks)
+        chunks = max(1, min(12, round(int(a.get("radius") or 32) / 16)))
+        got = call_bridge(gw, "perception.scan", {"radius": chunks, "find": ids, "findLimit": int(a.get("limit") or 20)}, limit=0)
+        try:
+            found = json.loads(got).get("found") or []
+        except ValueError:
+            return got[:2000]
+        return json.dumps(found, ensure_ascii=False)[:3000] if found else "附近没找到。"
+
     def common(**kw):
         return dict(available=_available, timeout=15, group=SERVER, **kw)
 
@@ -92,6 +119,13 @@ def tools():
                     count=_i("最多几个")), transfer, **common()),
         Tool("mc_recipes", "查几样物品的合成配方（返回能用来合成的 ref）。",
              _props(["items"], items=_s("物品 id，逗号分隔，比如 minecraft:crafting_table")), recipes, **common(read_only=True)),
+        Tool("mc_skill", "成套的动作，在后台自己做完：chop_tree 砍附近一整棵树并捡木头，collect_drops 捡地上的东西，"
+             "go_to_player 走到某人身边（写 player），stop 停下，status 看进度。",
+             _props(["name"], name=_s("chop_tree / collect_drops / go_to_player / stop / status"), player=_s("go_to_player 时写玩家名")),
+             skill, **common()),
+        Tool("mc_find_blocks", "在自己周围找某些方块的位置（比如原木、矿石、箱子），按距离给出坐标。",
+             _props(["blocks"], blocks=_s("方块 id，逗号分隔，比如 minecraft:oak_log"), radius=_i("多远以内（格），默认 32"),
+                    limit=_i("最多几个，默认 20")), find, **common(read_only=True)),
         Tool("mc_who_is_near", "看看身边有哪些玩家（叫得出名字的会写名字、多远）和哪些生物。",
              _props(radius=_i("多远以内，默认 48 格")), near, **common(read_only=True)),
         Tool("mc_follow", "跟着某个玩家走（身体会自己跟上、看着 ta，直到你说停或者时间到）；player 写 stop 就不跟了。",

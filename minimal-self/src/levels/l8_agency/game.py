@@ -153,14 +153,15 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
 <|im_start|>assistant
 """
 
-    def __init__(self, gw, username: str = "Noa", names: Tuple[str, ...] = ("乃爱", "Noa"), poll_seconds: float = 3.0,
-                 play_per_hour: int = 6, play_gap: float = 240.0, play_steps: int = 8):
+    def __init__(self, gw, username: str = "Noa", names: Tuple[str, ...] = ("乃爱", "Noa"), poll_seconds: float = 1.5,
+                 play_per_hour: int = 30, play_gap: float = 300.0, play_steps: int = 6, company_gap: float = 45.0):
         self.gw = gw
         self.username = username
         self.names = tuple(n for n in names if n) + (username,)
         self.poll_seconds = poll_seconds
         self.play_per_hour = play_per_hour
-        self.play_gap = play_gap
+        self.play_gap = play_gap                    # alone: a turn of her own every few minutes
+        self.company_gap = company_gap              # with people around: much more often
         self.play_steps = play_steps
         self.enabled = True
         self.connected = False
@@ -170,17 +171,41 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
         self.last_chat = 0.0
         self.last_play = 0.0
         self.last_clear = 0.0
+        self.last_reflex = 0.0
+        self.last_look = 0.0
         self.plays: List[float] = []
-        self.busy = False
+        self.chat_busy = False                      # answering someone (a model call is under way)
+        self.play_busy = False                      # in a turn of her own
+        self.interrupt = False                      # someone spoke while she was busy with her own turn
+        self.follow: Optional[str] = None           # the player she is walking with, if any
+        self.follow_until = 0.0
+        self.nav_goal: Optional[Tuple[float, float, float]] = None
+        self.people_near = 0                        # players within ~32 blocks at the last look around
+        self.loop: Optional[asyncio.Task] = None
         self.journal: List[Dict[str, Any]] = []
         cfg = gw.mcp.config.get(SERVER, {}) if getattr(gw, "mcp", None) else {}
         self.profile = PROFILES[cfg.get("profile", "mineflayer")]
         gw.autonomous_groups.add("mc")              # in the game she may join in without being named
 
+    @property
+    def busy(self) -> bool:
+        return self.chat_busy or self.play_busy
+
     # --- plumbing ----------------------------------------------------------------------
 
     def _call(self, tool: str, args: Dict[str, Any]) -> str:
         return self.gw.mcp.call(SERVER, tool, args, timeout=20)
+
+    def _rpc(self, method: str, params: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
+        """The mod bridge directly (mcpfabric only): small, frequent things that need no model."""
+        from src.levels.l8_agency.mc_extra import call_bridge
+        out = call_bridge(self.gw, method, params, timeout=5)
+        if out.startswith("出错了"):
+            return None
+        try:
+            return json.loads(out)
+        except ValueError:
+            return None
 
     def ready(self) -> bool:
         gw = self.gw
@@ -195,11 +220,25 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
         players = getattr(self.gw, "mc_players", ()) or ()
         return "*" in players or player in players
 
+    # --- the loop: her body runs on its own clock, not on the 10-second heartbeat -------
+
+    def start(self):
+        if self.loop is None or self.loop.done():
+            self.loop = asyncio.create_task(self.run_forever())
+
+    async def run_forever(self):
+        while True:
+            try:
+                await self.tick(clock.now())
+            except Exception as e:
+                logger.error(f"[Game] tick failed: {e}")
+            await asyncio.sleep(1.0)
+
     # --- chat --------------------------------------------------------------------------
 
     async def poll(self, now: float):
         """Read the game chat; what is new is heard like any message, and her answer is said in game."""
-        if self.busy or not self.ready() or now - self.last_poll < self.poll_seconds:
+        if self.chat_busy or not self.ready() or now - self.last_poll < self.poll_seconds:
             return
         self.last_poll = now
         try:
@@ -226,7 +265,9 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
             self.primed = True
             return
         if fresh:
-            self.busy = True                        # answered in the background: the heartbeat must not wait for a model
+            if self.play_busy:
+                self.interrupt = True               # stop what she is doing and turn to them
+            self.chat_busy = True                   # answered in the background: nothing waits for a model
             task = asyncio.create_task(self._process(fresh[:4], now))
             self.gw._evolve_tasks.add(task)
             task.add_done_callback(self.gw._evolve_tasks.discard)
@@ -239,7 +280,7 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
         except Exception as e:
             logger.error(f"[Game] chat failed: {e}")
         finally:
-            self.busy = False
+            self.chat_busy = False
 
     async def _hear(self, player: str, said: str, now: float):
         self.last_chat = now
@@ -247,33 +288,108 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
         uid = f"mc:{player}"
         logger.info(f"[Game] {player}: {said[:80]}")
         gw.memory.add_user_profile(uid, uid, player)
+        if self.profile is PROFILES["mcpfabric"]:
+            await asyncio.to_thread(self.look_toward, player)     # turn to whoever is talking, before answering
         reply = await gw.hear(said, user_id=uid, nickname=player, group_id="mc", addressed=self.addressed(said))
         if reply and not gw._is_silence(reply):
             await self.say(reply)
 
-    async def say(self, text: str):
-        for line in split_for_chat(text):
+    async def say(self, text: str, own: bool = False):
+        """Say it in game chat. `own`: she started it (not a reply hear() already wrote down)."""
+        lines = split_for_chat(text)
+        for line in lines:
             try:
                 await asyncio.to_thread(self._call, self.profile["send"], {"message": line})
             except Exception as e:
                 logger.error(f"[Game] could not say it: {e}")
                 return
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(0.6)
+        if own and lines:
+            said = "\n".join(lines)
+            self.gw.record_own(said, None, "mc")
+            # so that someone answering what she just said counts as talking to her
+            self.gw.last_exchange["mc"] = (clock.now(), "self", said)
+
+    # --- reflexes: what a body does without thinking about it ---------------------------
+
+    @staticmethod
+    def offline_uuid(name: str) -> str:
+        """The UUID an offline-mode server gives a player name (Java's UUID.nameUUIDFromBytes)."""
+        import hashlib
+        import uuid
+        h = bytearray(hashlib.md5(("OfflinePlayer:" + name).encode("utf-8")).digest())
+        h[6] = (h[6] & 0x0F) | 0x30
+        h[8] = (h[8] & 0x3F) | 0x80
+        return str(uuid.UUID(bytes=bytes(h)))
+
+    def _players(self) -> List[Dict[str, Any]]:
+        got = self._rpc("perception.entities", {"radius": 48, "kinds": ["player"]}) or {}
+        me = self.offline_uuid(self.username)
+        return [e for e in got.get("entities") or [] if e.get("type") == "minecraft:player" and e.get("uuid") != me]
+
+    def look_toward(self, player: str):
+        target = self.offline_uuid(player)
+        for e in self._players():
+            if e.get("uuid") == target:
+                self._rpc("control.lookAt", {"x": e["x"], "y": e["y"] + 1.6, "z": e["z"]})
+                return
+
+    def reflex(self, now: float):
+        """Follow the person she said she would walk with; otherwise, now and then, look at whoever is near."""
+        players = self._players()
+        self.people_near = sum(1 for e in players if e.get("distance", 99) <= 32)
+        if self.follow:
+            if now > self.follow_until:
+                self.follow = None
+                return
+            target = self.offline_uuid(self.follow)
+            them = next((e for e in players if e.get("uuid") == target), None)
+            if them is None:
+                return                              # out of sight: wait, they may come back
+            goal = (them["x"], them["y"], them["z"])
+            if them.get("distance", 0) > 4:
+                moved = self.nav_goal is None or sum((a - b) ** 2 for a, b in zip(goal, self.nav_goal)) > 9
+                status = self._rpc("nav.status") or {}
+                if moved or not status.get("active"):
+                    self._rpc("nav.pathTo", {"x": goal[0], "y": goal[1], "z": goal[2], "reachRadius": 2.5,
+                                             "sprint": them.get("distance", 0) > 12, "timeoutSeconds": 20})
+                    self.nav_goal = goal
+            else:
+                self._rpc("control.lookAt", {"x": goal[0], "y": goal[1] + 1.6, "z": goal[2]})
+            return
+        near = [e for e in players if e.get("distance", 99) <= 10]
+        if near and now - self.last_look >= 6:
+            self.last_look = now
+            e = min(near, key=lambda e: e.get("distance", 99))
+            self._rpc("control.lookAt", {"x": e["x"], "y": e["y"] + 1.6, "z": e["z"]})
+
+    def set_follow(self, player: Optional[str], minutes: float = 20) -> str:
+        if not player:
+            self.follow = None
+            self._rpc("nav.stop")
+            return "不跟了。"
+        self.follow = player
+        self.follow_until = clock.now() + minutes * 60
+        self.nav_goal = None
+        return f"好，跟着 {player}（{int(minutes)} 分钟内，之后自己停下）。"
 
     # --- her own time in the game -------------------------------------------------------
 
     def play_due(self, now: float) -> bool:
         gw = self.gw
         self.plays = [t for t in self.plays if now - t < 3600]
-        return bool(self.ready() and self.connected and not self.busy and not gw.wandering
+        company = self.people_near > 0 or now - self.last_chat < 600
+        gap = self.company_gap if company else self.play_gap
+        return bool(self.ready() and self.connected and not self.busy and not self.follow and not gw.wandering
                     and not gw.metabolism.is_sleeping and gw.metabolism.energy >= 25
-                    and now - self.last_chat > 20 and now - self.last_play >= self.play_gap
+                    and now - self.last_chat > 15 and now - self.last_play >= gap
                     and len(self.plays) < self.play_per_hour and gw.inference_engine)
 
     async def play(self, now: float):
         """A short turn of her own in the world."""
         gw = self.gw
-        self.busy = True
+        self.play_busy = True
+        self.interrupt = False
         self.last_play = now
         self.plays.append(now)
         try:
@@ -286,16 +402,18 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
             raw = await gw._respond(prompt, gw.emotion.get_compound_state(), {"max_tokens": 200, "temperature": 0.8}, None, ctx)
             said = gw._finalize_response(raw or "")
             did = [n for n in ctx.used]
-            if said and not gw._is_silence(said) and "不说" not in said:
-                await self.say(said)
-            note = f"我在 Minecraft 里自己玩了一会儿（用了 {len(did)} 步）" + (f"，说了：{said}" if said and "不说" not in said else "")
+            speak = said and not gw._is_silence(said) and "不说" not in said and not self.interrupt
+            if speak:
+                await self.say(said, own=True)
+            note = f"我在 Minecraft 里自己玩了一会儿（用了 {len(did)} 步）" + (f"，说了：{said}" if speak else "")
             self.journal = ([{"t": now, "note": note, "tools": did}] + self.journal)[:20]
             gw.episodes.add(note, kind="game", user_id="self", valence=0.3, arousal=0.5)
-            gw._decide("play", "mc", None, note, said[:60] if said else "")
+            gw._decide("play", "mc", None, note, said[:60] if speak else "")
         except Exception as e:
             logger.error(f"[Game] play failed: {e}")
         finally:
-            self.busy = False
+            self.play_busy = False
+            self.interrupt = False
 
     # Screens that stand between her and the world when nobody is looking: the pause menu (her window lost
     # focus), a death screen, a chat box or an inventory someone left open. A container she opened herself
@@ -320,13 +438,15 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
         return None
 
     def _scene(self) -> str:
-        """What she knows going in: where she is, who has been talking."""
+        """What she knows going in: where she is, who is around, who has been talking."""
         parts = []
         try:
             tool, args = self.profile["self"]
             parts.append("我现在的状态：" + self._call(tool, args).strip()[:300])
         except Exception:
             pass
+        if self.people_near:
+            parts.append(f"附近 32 格内有 {self.people_near} 个玩家。")
         try:
             tool, args = self.profile["read"]
             recent = self.profile["parse"](self._call(tool, args))
@@ -339,17 +459,21 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
     async def tick(self, now: float):
         # A pause menu (her window lost focus) or a chat box left open freezes her body; nobody should have to
         # come over and press Esc for her
-        if not self.busy and self.ready() and now - self.last_clear >= 8:
+        if not self.play_busy and self.ready() and now - self.last_clear >= 8:
             self.last_clear = now
             await asyncio.to_thread(self.clear_screen)
         await self.poll(now)
+        if (self.profile is PROFILES["mcpfabric"] and not self.play_busy and self.ready() and self.connected
+                and now - self.last_reflex >= 2):
+            self.last_reflex = now
+            await asyncio.to_thread(self.reflex, now)
         if self.play_due(now):
-            self.busy = True
+            self.play_busy = True
             task = asyncio.create_task(self.play(now))
             self.gw._evolve_tasks.add(task)
             task.add_done_callback(self.gw._evolve_tasks.discard)
 
     def status(self) -> Dict[str, Any]:
         return {"enabled": self.enabled, "connected": self.connected, "username": self.username,
-                "plays_this_hour": len(self.plays), "journal": self.journal[:5],
-                "last_chat": self.last_chat or None}
+                "plays_this_hour": len(self.plays), "journal": self.journal[:5], "following": self.follow,
+                "people_near": self.people_near, "last_chat": self.last_chat or None}

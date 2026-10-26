@@ -569,7 +569,7 @@ class GlobalWorkspace:
             self._maintainer_tick(now)
             self._maybe_wander(now)
             if self.game is not None:
-                await self.game.tick(now)
+                self.game.start()          # her body runs on its own one-second clock (game.py)
 
             # Level 8: Closed-loop drives choose (or decline) a self-initiated action; goals weigh in
             if now - self.last_action_time >= self.min_action_interval:

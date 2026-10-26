@@ -177,6 +177,7 @@ class TestMcpfabric(unittest.TestCase):
         self.gw.mcp = self.hub
         self.gw.mc_players = ("*",)
         self.game = GameBridge(self.gw, "Noa", names=("乃爱",), poll_seconds=0)
+        self.gw.game = self.game
 
     def test_chat_events_are_parsed(self):
         text = json.dumps({"messages": [
@@ -251,6 +252,73 @@ class TestMcpfabric(unittest.TestCase):
         self.assertIn("紧急封锁", run("mc_open_block", {"x": 1, "y": 64, "z": 2}, steve))
         self.gw.firewall.set_locked(False)
         self.assertEqual(len(seen), 3)
+
+    def _bridge(self, entities):
+        """A stand-in for the mod's HTTP bridge: answers the reflex methods and records what was asked."""
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        calls = []
+
+        class Bridge(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                calls.append((body["method"], body["params"]))
+                result = {"perception.entities": {"entities": entities},
+                          "nav.status": {"active": False}}.get(body["method"], {"ok": True})
+                out = json.dumps({"ok": True, "result": result}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(out)
+
+            def log_message(self, *a):
+                pass
+        server = HTTPServer(("127.0.0.1", 0), Bridge)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        self.gw.mc_bridge = (f"http://127.0.0.1:{server.server_port}", "t")
+        return calls
+
+    def test_offline_uuids_match_what_the_server_gives(self):
+        # JusticeedGen's player entity as seen on the friends' offline-mode server
+        self.assertEqual(GameBridge.offline_uuid("JusticeedGen"), "fc72b067-3595-319a-8f41-36e32a4eb47b")
+
+    def test_she_follows_someone_and_looks_at_whoever_is_near(self):
+        steve = GameBridge.offline_uuid("Steve")
+        calls = self._bridge([{"uuid": steve, "type": "minecraft:player", "x": 20, "y": 64, "z": 5, "distance": 15},
+                              {"uuid": GameBridge.offline_uuid("Noa"), "type": "minecraft:player", "x": 0, "y": 64, "z": 0,
+                               "distance": 0}])
+        self.game.set_follow("Steve")
+        self.game.reflex(clock.now())
+        path = [p for m, p in calls if m == "nav.pathTo"]
+        self.assertEqual(path[0]["x"], 20)
+        self.assertTrue(path[0]["sprint"])                                   # far away: she runs
+        self.assertEqual(self.game.people_near, 1)                           # herself is not company
+        self.assertFalse(self.game.play_due(clock.now()))                    # walking with someone: no turn of her own
+        self.game.set_follow(None)
+        calls.clear()
+        self.game.reflex(clock.now())
+        self.assertFalse([m for m, _ in calls if m == "nav.pathTo"])
+        self.assertFalse([m for m, _ in calls if m == "control.lookAt"])     # 15 blocks: too far to look at
+
+    def test_people_around_make_her_turns_come_sooner(self):
+        self.game.connected = True
+        self.game.primed = True
+        self.gw.metabolism.energy = 90
+        self.gw.metabolism.is_sleeping = False
+        t = clock.now()
+        self.game.last_play = t - 60
+        self.assertFalse(self.game.play_due(t))                              # alone: every few minutes
+        self.game.people_near = 2
+        self.assertTrue(self.game.play_due(t))                               # with company: much more often
+
+    def test_someone_talking_interrupts_her_own_turn(self):
+        self.game.interrupt = True
+        out = asyncio.run(self.gw.toolbox.run("navigate_to", {}, ToolContext("self", "乃爱", origin="game")))
+        self.assertIn("先停下", out)
+        self.game.interrupt = False
+        out = asyncio.run(self.gw.toolbox.run("navigate_to", {}, ToolContext("self", "乃爱", origin="game")))
+        self.assertIn("navigate_to ok", out)
 
     def test_admin_tools_are_never_hers(self):
         names = {t.name for t in self.gw.toolbox.available(ToolContext("10001", "创造者"))} | \

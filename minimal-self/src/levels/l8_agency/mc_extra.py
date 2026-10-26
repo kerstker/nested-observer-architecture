@@ -64,6 +64,15 @@ def tools():
     def craft(gw, ctx, a):
         return call_bridge(gw, "craft.place", {"ref": str(a.get("ref") or ""), "all": bool(a.get("all"))})
 
+    def follow(gw, ctx, a):
+        game = getattr(gw, "game", None)
+        if game is None:
+            return "游戏身体没有连上。"
+        who = str(a.get("player") or "").strip()
+        if who.lower() in ("", "stop", "停", "不跟了"):
+            return game.set_follow(None)
+        return game.set_follow(who, float(a.get("minutes") or 20))
+
     def common(**kw):
         return dict(available=_available, timeout=15, group=SERVER, **kw)
 
@@ -79,6 +88,8 @@ def tools():
                     count=_i("最多几个")), transfer, **common()),
         Tool("mc_recipes", "查几样物品的合成配方（返回能用来合成的 ref）。",
              _props(["items"], items=_s("物品 id，逗号分隔，比如 minecraft:crafting_table")), recipes, **common(read_only=True)),
+        Tool("mc_follow", "跟着某个玩家走（身体会自己跟上、看着 ta，直到你说停或者时间到）；player 写 stop 就不跟了。",
+             _props(["player"], player=_s("玩家名，或 stop"), minutes=_i("最多跟多久（分钟），默认 20")), follow, **common()),
         Tool("mc_craft", "在打开的工作台（或背包合成格）里按配方摆好材料，然后从结果格拿走。",
              _props(["ref"], ref=_s("mc_recipes 给的 ref"), all=_s("true 就能做多少做多少")), craft, **common()),
     ]

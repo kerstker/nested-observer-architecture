@@ -6,9 +6,11 @@ from src.levels.l4_emotion.emotion import EmotionEngine, EmotionState
 class TestFramework(unittest.TestCase):
     def test_sensory(self):
         cortex = SensoryCortex()
-        res = cortex.process_text("好痛别打我")
+        res = cortex.process_text("再不听话我就打你")
         self.assertIsNotNone(res)
         self.assertTrue("pain" in res)
+        # the speaker begging not to be hit is not a blow to her
+        self.assertIsNone(cortex.process_text("好痛别打我"))
         
         res2 = cortex.process_text("摸摸头")
         self.assertTrue("pleasure" in res2)

@@ -10,6 +10,11 @@ logger = logging.getLogger(__name__)
 
 TRAIT_MIN, TRAIT_MAX = 0.1, 0.9
 MAX_STEP = 0.05   # largest net change of one trait in one day (however often she consolidates)
+INNATE = {"tsundere": 0.7, "curiosity": 0.8, "affection": 0.5, "energy": 0.6}   # where she began (database defaults)
+PULL = 0.1        # share of the gap to the level experience implies, closed per consolidation at full evidence
+HOME = 0.01       # weak pull back toward where she began
+SPAN = 0.25       # how far experience alone may take a trait from where she began
+TRUST_AFTER = 10  # episodes at which evidence counts for half
 
 def _clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
@@ -160,23 +165,41 @@ class NarrativeSelf:
         return {trait: total or 0.0 for trait, total in rows}
 
     def drift_traits(self, eps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        A trait moves toward what her recent experience supports, and weakly back toward where she began.
+
+        It used to move by the *sign* of the experience (warm days always pushed affection up), so a
+        trait with no force pulling it back climbed to its bound within days whatever happened. Now
+        each trait has a level that the evidence implies: affection from how pleasant the exchanges
+        were, tsundere from how often they had friction, energy from how activated she was, curiosity
+        from how much she looked things up - measured against what is ordinary, and never more than
+        SPAN from where she began. It closes a share of the gap to that level (more of it the more
+        episodes the evidence rests on), so it settles where experience says it should be, and stays
+        put when experience matches it.
+        """
         social = [e for e in eps if e["kind"] in ("dialogue", "proactive") and e["user_id"] not in (None, "self")]
         searches = [e for e in eps if e["kind"] == "search"]
         conflicts = [e for e in social if e["conflict"] > 0]
-        proposals = []
+        proposals = []                      # (trait, level the evidence implies, how many episodes, evidence ids, why)
+
+        def implied(trait: str, signal: float, reference: float, gain: float) -> float:
+            """Where experience puts the trait: its starting point, moved by how far the evidence is from
+            ordinary - but only within SPAN of where she began (she can change, not be rewritten)."""
+            innate = INNATE[trait]
+            return _clamp(innate + gain * (signal - reference), max(TRAIT_MIN, innate - SPAN), min(TRAIT_MAX, innate + SPAN))
         if social:
             mean_v = sum(e["valence"] for e in social) / len(social)
-            proposals.append(("affection", 0.1 * mean_v, [e["id"] for e in social],
-                              f"今天和人相处的平均心情 {mean_v:+.2f}"))
+            proposals.append(("affection", implied("affection", mean_v, 0.15, 0.5), len(social),
+                              [e["id"] for e in social], f"最近和人相处的平均心情 {mean_v:+.2f}"))
             frac = len(conflicts) / len(social)
-            proposals.append(("tsundere", 0.1 * frac - 0.01, [e["id"] for e in (conflicts or social)],
-                              f"今天 {len(conflicts)}/{len(social)} 次互动里有冲突"))
+            proposals.append(("tsundere", implied("tsundere", frac, 0.05, 3.0), len(social),
+                              [e["id"] for e in (conflicts or social)], f"{len(conflicts)}/{len(social)} 次互动里有冲突"))
         if eps:
             mean_a = sum(e["arousal"] for e in eps) / len(eps)
-            proposals.append(("energy", 0.1 * (mean_a - 0.3), [e["id"] for e in eps],
-                              f"今天平均唤醒度 {mean_a:.2f}"))
-            proposals.append(("curiosity", 0.02 * len(searches) if searches else -0.01,
-                              [e["id"] for e in (searches or eps)], f"今天主动探索了 {len(searches)} 次"))
+            proposals.append(("energy", implied("energy", mean_a, 0.3, 0.8), len(eps),
+                              [e["id"] for e in eps], f"最近平均唤醒度 {mean_a:.2f}"))
+            proposals.append(("curiosity", implied("curiosity", min(3, len(searches)), 1, 0.1), len(eps),
+                              [e["id"] for e in (searches or eps)], f"最近主动探索了 {len(searches)} 次"))
 
         traits = self.persona_db.get_persona_traits()
         # The limit is per day, not per consolidation: consolidation also runs while awake whenever
@@ -184,10 +207,12 @@ class NarrativeSelf:
         # all the way to its bound. What already moved in the last 24 hours counts against today.
         spent = self.trait_change_today(clock.now())
         changes = []
-        for trait, delta, evidence, reason in proposals:
+        for trait, target, n, evidence, reason in proposals:
             if trait not in traits or not evidence:
                 continue
             old = traits[trait]["value"]
+            weight = n / (n + TRUST_AFTER)                    # a handful of episodes says little, hundreds say a lot
+            delta = PULL * weight * (target - old) + HOME * (INNATE.get(trait, old) - old)
             used = spent.get(trait, 0.0)
             # Over budget already: no further in that direction - but never a forced swing back
             delta = _clamp(delta, min(0.0, -MAX_STEP - used), max(0.0, MAX_STEP - used))

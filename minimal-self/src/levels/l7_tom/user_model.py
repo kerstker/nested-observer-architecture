@@ -17,6 +17,8 @@ class UserModelStore:
     and who tends to ignore her.
     """
     DEFAULT_LATENCY = 600.0   # seconds, before anything is known
+    DEFAULT_SPREAD = 1.5      # how widely a person's answer times vary (std of log-seconds) before anything is known
+    MIN_SPREAD = 0.6          # ... and never trusted to be narrower than this
 
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -32,6 +34,7 @@ class UserModelStore:
         if user_id not in self.models:
             self.models[user_id] = {
                 "log_latency": math.log(self.DEFAULT_LATENCY),
+                "log_latency_var": self.DEFAULT_SPREAD ** 2,
                 "sentiment": 0.0,
                 "invitations": 0,     # times Noa said something expecting an answer
                 "answered": 0,        # ... and got one within the expected window
@@ -49,6 +52,10 @@ class UserModelStore:
 
     def expected_latency(self, user_id: str) -> float:
         return math.exp(self.get(user_id)["log_latency"])
+
+    def spread(self, user_id: str) -> float:
+        """Std of this person's log answer time: people who answer in 5 s or in 2 h are not surprising either way."""
+        return max(self.MIN_SPREAD, math.sqrt(self.get(user_id).get("log_latency_var", self.DEFAULT_SPREAD ** 2)))
 
     def response_probability(self, user_id: str) -> float:
         m = self.get(user_id)
@@ -82,17 +89,25 @@ class UserModelStore:
         if pending:
             latency = max(1.0, now - pending["t"])
             latency_error = math.log(latency / pending["expected_latency"])   # > 0: slower than expected
+            # ... in units of how much this person's answer times usually vary: a "faster than expected"
+            # that happens a third of the time (anyone who answers in bursts and then disappears) is no surprise
+            spread = self.spread(user_id)
+            latency_z = latency_error / spread
             sentiment_error = sentiment - pending["expected_sentiment"]
             on_time = not pending["ignored"]
             if on_time:
                 m["answered"] += 1
-            m["log_latency"] += learning_rate * (math.log(latency) - m["log_latency"])
+            deviation = math.log(latency) - m["log_latency"]
+            m["log_latency"] += learning_rate * deviation
+            m["log_latency_var"] = m.get("log_latency_var", self.DEFAULT_SPREAD ** 2) * (1 - learning_rate)                 + learning_rate * deviation ** 2
             error = {"user_id": user_id, "kind": pending["kind"], "need": pending["need"],
                      "on_time": on_time, "latency": latency,
                      "expected_latency": pending["expected_latency"],
-                     "latency_error": latency_error, "sentiment_error": sentiment_error,
-                     # A late answer after being given up on is itself a (pleasant) surprise
-                     "surprise": min(1.0, abs(latency_error) / 3 + abs(sentiment_error) / 2 + (0.0 if on_time else 0.4))}
+                     "latency_error": latency_error, "latency_z": latency_z, "sentiment_error": sentiment_error,
+                     # A late answer after being given up on is itself a (pleasant) surprise; a normal-sized
+                     # deviation (|z| <= 1) is no surprise at all
+                     "surprise": min(1.0, max(0.0, abs(latency_z) - 1.0) / 4 + abs(sentiment_error) / 2
+                                     + (0.0 if on_time else 0.4))}
             m["pending"] = None
         m["sentiment"] += learning_rate * (sentiment - m["sentiment"])
         self.save(user_id)

@@ -74,8 +74,14 @@ class ValueSystem:
 
     # --- appraisal ----------------------------------------------------------------
 
+    TENSION_HALF_LIFE = 20 * 60
+
     def update_tension(self, conflict: float):
         self.tension = max(0.0, min(1.0, self.tension + conflict))
+
+    def decay_tension(self, seconds: float):
+        """Tension eases with time (it only ever went up with insults and down with petting before)."""
+        self.tension *= 0.5 ** (max(0.0, seconds) / self.TENSION_HALF_LIFE)
 
     def appraise(self, text: str) -> Dict[str, Dict[str, float]]:
         lower = (text or "").lower()

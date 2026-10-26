@@ -157,7 +157,9 @@ class TestPersonalityLimit(unittest.TestCase):
         gw.memory.db.update_persona_trait("affection", 0.7)
         calm = [{"id": 1, "kind": "dialogue", "user_id": "u1", "valence": 0.05, "arousal": 0.3, "conflict": 0}]
         gw.narrative.drift_traits(calm)
-        self.assertAlmostEqual(gw.memory.db.get_persona_traits()["affection"]["value"], 0.7, places=6)
+        calm_value = gw.memory.db.get_persona_traits()["affection"]["value"]
+        self.assertLessEqual(calm_value, 0.7)                     # no further rise today ...
+        self.assertGreater(calm_value, 0.68)                      # ... and no forced swing back either
         sad = [{**calm[0], "valence": -0.9}]
         gw.narrative.drift_traits(sad)                           # moving back is still allowed
         self.assertLess(gw.memory.db.get_persona_traits()["affection"]["value"], 0.7)

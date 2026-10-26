@@ -14,7 +14,10 @@ class Homeostasis:
         self.curiosity_need = 0.0 # Level 19: Curiosity
         self.last_update = clock.now()
         
-    def tick(self, interaction_count: int = 0) -> Dict[str, float]:
+    ASLEEP_PACE = 0.4          # hunger, loneliness and boredom grow slower while she sleeps
+    GROOMING_PER_HOUR = 0.05   # she licks herself clean in her sleep (nothing else ever lowered hygiene_need)
+
+    def tick(self, interaction_count: int = 0, sleeping: bool = False) -> Dict[str, float]:
         """
         Update needs based on time passed.
         interaction_count: Number of interactions in this tick (to satisfy social)
@@ -22,23 +25,27 @@ class Homeostasis:
         now = clock.now()
         delta_hours = (now - self.last_update) / 3600.0
         self.last_update = now
-        
+        pace = self.ASLEEP_PACE if sleeping else 1.0
+
         # Decay rates (per hour)
         # Hunger increases 10% per hour (10 hours to full hunger)
-        self.hunger = min(1.0, self.hunger + (0.10 * delta_hours))
-        
+        self.hunger = min(1.0, self.hunger + (0.10 * delta_hours * pace))
+
         # Social need increases 5% per hour if no interaction
         if interaction_count > 0:
             self.social_need = max(0.0, self.social_need - 0.2) # Interaction satisfies social
         else:
-            self.social_need = min(1.0, self.social_need + (0.05 * delta_hours))
-            
-        # Hygiene need increases 2% per hour
-        self.hygiene_need = min(1.0, self.hygiene_need + (0.02 * delta_hours))
+            self.social_need = min(1.0, self.social_need + (0.05 * delta_hours * pace))
+
+        # Hygiene need increases 2% per hour awake; asleep she grooms herself and it falls
+        if sleeping:
+            self.hygiene_need = max(0.0, self.hygiene_need - self.GROOMING_PER_HOUR * delta_hours)
+        else:
+            self.hygiene_need = min(1.0, self.hygiene_need + (0.02 * delta_hours))
 
         # Curiosity increases 20% per hour (Gets bored quickly)
         # Satisfied by learning new things (Search/Memorize)
-        self.curiosity_need = min(1.0, self.curiosity_need + (0.20 * delta_hours))
+        self.curiosity_need = min(1.0, self.curiosity_need + (0.20 * delta_hours * pace))
         
         return {
             "hunger": self.hunger,

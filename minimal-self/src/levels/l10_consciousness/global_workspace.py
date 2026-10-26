@@ -297,6 +297,9 @@ class GlobalWorkspace:
             "metacognition": self.metacog.to_dict(),
             "awakening": self.awakening,
             "last_action_time": self.last_action_time,
+            # Saved so a restart is not a reason to start an agent run: the 6-hour self-check timer survives it
+            "last_self_check": self.last_self_check,
+            "last_evolve_time": self.last_evolve_time,
         }
 
     def _save_state(self, cause: str):
@@ -337,6 +340,8 @@ class GlobalWorkspace:
         self.metacog.load_dict(snap.get("metacognition", {}))
         self.style_edge = snap.get("style_edge", 0.0)
         self.last_action_time = snap.get("last_action_time", 0.0)
+        self.last_self_check = snap.get("last_self_check", 0.0)
+        self.last_evolve_time = max(self.last_evolve_time, snap.get("last_evolve_time", 0.0))
         self.awakening = snap.get("awakening", 0) + 1
         # Being offline is unconsciousness: the body rests, and she wakes up on start-up
         self.metabolism.energy = snap.get("energy", self.metabolism.max_energy)
@@ -429,7 +434,8 @@ class GlobalWorkspace:
         status = self.metabolism.tick()
 
         # L6 Homeostasis Tick
-        needs = self.homeostasis.tick()
+        needs = self.homeostasis.tick(sleeping=self.metabolism.is_sleeping)
+        self.values.decay_tension(dt)
 
         # Publish tick events
         await self.bus.publish(EventType.METABOLISM_TICK, status)
@@ -748,7 +754,7 @@ class GlobalWorkspace:
         if not err["on_time"]:
             delta.joy += 0.3
             reasons.append(f"{name} 终于回我了")
-        elif err["latency_error"] < -0.7:
+        elif err.get("latency_z", err["latency_error"] / 1.5) < -1.5:       # clearly faster than THEY usually are
             delta.joy += 0.1
             reasons.append(f"{name} 回得比我想的快")
         if err["sentiment_error"] > 0.3:
@@ -1986,13 +1992,15 @@ If not, output "NO".
             await self.bus.publish(EventType.SENSORY_STIMULUS, sensation)
             if "pain" in sensation:
                 self.metabolism.consume(sensation["pain"] * 10)
-                self.values.tension += 0.2
+                self.values.update_tension(0.2)
             if "food" in sensation:
                 self.homeostasis.alleviate("hunger", sensation["food"])
                 self.metabolism.recover(20)
+            if "clean" in sensation:
+                self.homeostasis.alleviate("hygiene", 0.6 * sensation["clean"])
             if "pleasure" in sensation:
                 self.homeostasis.alleviate("social", sensation["pleasure"])
-                self.values.tension = max(0, self.values.tension - 0.1)
+                self.values.update_tension(-0.1)
 
         # Level 19: Curiosity satisfaction
         # If the user teaches something or answers a question, curiosity decreases
@@ -2020,6 +2028,7 @@ If not, output "NO".
             delta.sorrow += 0.2 * pain
             delta.joy += 0.6 * sensation.get("pleasure", 0.0)
             delta.joy += 0.2 * sensation.get("food", 0.0)
+            delta.joy += 0.15 * sensation.get("clean", 0.0)
         if conflict:
             delta.anger += 0.6 * conflict
             delta.disgust += 0.3 * conflict
@@ -2043,6 +2052,8 @@ If not, output "NO".
                 reasons.append(f"{name} 摸摸我、抱抱我")
             if sensation.get("food"):
                 reasons.append(f"{name} 喂我吃东西")
+            if sensation.get("clean"):
+                reasons.append(f"{name} 给我洗得干干净净")
         if conflict:
             reasons.append(f"{name} 说的话冒犯了我")
         empathy = {"sad": "难过", "happy": "开心", "angry": "生气"}

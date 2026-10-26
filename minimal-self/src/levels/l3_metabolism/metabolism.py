@@ -10,7 +10,12 @@ class Metabolism:
         self.max_energy = max_energy
         self.energy = max_energy
         self.is_sleeping = False
-        self.cognitive_cost = 0.25  # Per reply (more for long ones): a whole afternoon of chatting leaves her tired, not knocked out
+        # Per reply (more for long ones). Calibrated to what she really does: a typical day is ~40 replies, a busy
+        # one 300-600 (several QQ groups). Awake she loses 5/h and sleeping restores 15/h, so a day's replies
+        # must fit in what is left: at 0.12 a typical day is ~7 h of sleep, 300 replies ~9 h, 600 replies ~12 h.
+        # (At the old 0.25 a 600-reply day meant 19 h asleep - it only worked because every message with the
+        # word 吃 in it counted as a meal worth +20 energy.)
+        self.cognitive_cost = 0.12
         # Rates are per hour of wall-clock time, so behaviour does not depend on tick frequency.
         # Awake: 100 -> 25 takes ~15h; asleep: 25 -> 80 takes ~3.7h.
         self.awake_drain_per_hour = 5.0

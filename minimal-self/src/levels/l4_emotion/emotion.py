@@ -15,7 +15,17 @@ class EmotionEngine:
     """
     Level 4: Emotion System (Enhanced)
     Manages 6 basic emotions + compound states.
+
+    Two things make the numbers mean something:
+    - Each emotion fades at its own pace (`HALF_LIFE_SCALE` x the base half-life, joy's): a startle is
+      gone in about a minute, fear and disgust in minutes, anger in a quarter of an hour, sorrow lingers.
+      With one shared half-life, surprise stayed near its maximum for as long as joy did.
+    - A push has diminishing returns: it closes a share of the *remaining* distance to 1 instead of adding
+      a fixed amount, so a steady trickle of small pushes settles at a level rather than pinning the
+      emotion at its ceiling (where it says nothing). From rest a push is worth exactly its size.
     """
+    HALF_LIFE_SCALE = {"joy": 1.0, "anger": 0.75, "sorrow": 2.25, "fear": 0.5, "surprise": 0.075, "disgust": 0.5}
+
     def __init__(self, half_life_seconds: float = 20 * 60):
         self.state = EmotionState()
         self.mood_history = []
@@ -27,7 +37,8 @@ class EmotionEngine:
 
     def update(self, delta: EmotionState):
         for f in fields(EmotionState):
-            value = getattr(self.state, f.name) + getattr(delta, f.name)
+            current, push = getattr(self.state, f.name), getattr(delta, f.name)
+            value = current + push * (1.0 - current) if push > 0 else current + push
             setattr(self.state, f.name, max(0.0, min(1.0, value)))
 
     def decay(self, now: float = None):
@@ -35,8 +46,8 @@ class EmotionEngine:
         now = clock.now() if now is None else now
         elapsed = max(0.0, now - self.last_decay)
         self.last_decay = now
-        factor = 0.5 ** (elapsed / self.half_life_seconds)
         for f in fields(EmotionState):
+            factor = 0.5 ** (elapsed / (self.half_life_seconds * self.HALF_LIFE_SCALE.get(f.name, 1.0)))
             base = self.baseline.get(f.name, 0.0)
             setattr(self.state, f.name, base + (getattr(self.state, f.name) - base) * factor)
 

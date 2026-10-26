@@ -334,6 +334,8 @@ if config.get('MCP_ENABLED'):
                                                         config.get('MC_BRIDGE_URL', 'http://127.0.0.1:25599'),
                                                         config.get('MC_BRIDGE_TOKEN', ''))
                 global_workspace.firewall.own_ports += [25599, 25600]     # her game body is hers, not the browser's
+                global_workspace.mc_bridge = (config.get('MC_BRIDGE_URL', 'http://127.0.0.1:25599'),
+                                              config.get('MC_BRIDGE_TOKEN', ''))
             else:
                 servers['minecraft'] = minecraft_server(config.get('MC_HOST', 'localhost'), int(config.get('MC_PORT', 25565)),
                                                         config.get('MC_USERNAME', 'Noa'))

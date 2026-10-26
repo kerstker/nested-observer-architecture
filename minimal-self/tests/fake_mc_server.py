@@ -14,7 +14,8 @@ FABRIC = os.environ.get("NOA_FAKE_MC_MODE") == "mcpfabric"
 NAMES = (("get_self", "Get local player state"), ("get_recent_chat", "Get recent chat"), ("send_chat", "Send chat"),
          ("navigate_to", "Walk somewhere"), ("break_block", "Break a block"), ("screenshot", "Take a screenshot"),
          ("run_command", "Run a command"), ("give_item", "Give an item"), ("set_block", "Set a block"),
-         ("supervised_command", "Supervised command")) if FABRIC else (
+         ("supervised_command", "Supervised command"), ("get_screen", "Current screen"),
+         ("close_screen", "Close the open screen")) if FABRIC else (
     ("get-position", "Get the current position of the bot"), ("read-chat", "Get recent chat messages from players"),
     ("send-chat", "Send a chat message in-game"), ("move-to-position", "Move the bot"), ("dig-block", "Dig a block"),
     ("find-entity", "Find the nearest entity"))
@@ -63,6 +64,14 @@ for line in sys.stdin:
             with open(os.path.join(DIR, "sent.txt"), "a", encoding="utf-8") as f:
                 f.write(args.get("message", "") + "\n")
             reply(rid, text(f'Sent message: "{args.get("message", "")}"'))
+        elif name == "get_screen":
+            path = os.path.join(DIR, "screen.txt")
+            screen = open(path, encoding="utf-8").read().strip() if os.path.exists(path) else "none"
+            reply(rid, text(json.dumps({"inWorld": True, "screen": screen, "paused": screen == "pause"})))
+        elif name == "close_screen":
+            with open(os.path.join(DIR, "screen.txt"), "w", encoding="utf-8") as f:
+                f.write("none")
+            reply(rid, text(json.dumps({"closed": True})))
         elif name in ("get-position", "get_self"):
             reply(rid, text("Position: x=10, y=64, z=-3"))
         else:

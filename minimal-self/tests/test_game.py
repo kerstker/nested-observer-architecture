@@ -206,6 +206,50 @@ class TestMcpfabric(unittest.TestCase):
         sent = open(os.path.join(self.dir, "sent.txt"), encoding="utf-8").read().splitlines()
         self.assertEqual(sent, ["我在呢"])
 
+    def test_a_pause_menu_or_open_inventory_in_her_way_is_closed(self):
+        for screen in ("pause", "container", "death"):
+            with open(os.path.join(self.dir, "screen.txt"), "w", encoding="utf-8") as f:
+                f.write(screen)
+            self.assertEqual(self.game.clear_screen(), screen)
+            self.assertEqual(open(os.path.join(self.dir, "screen.txt"), encoding="utf-8").read(), "none")
+        self.assertIsNone(self.game.clear_screen())                      # nothing open: nothing to do
+
+    def test_chests_crafting_and_recipes_through_the_bridge(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from src.levels.l8_agency import mc_extra
+        seen = []
+
+        class Bridge(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                seen.append((self.headers.get("Authorization"), body["method"], body["params"]))
+                out = json.dumps({"ok": True, "result": {"method": body["method"]}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(out)
+
+            def log_message(self, *a):
+                pass
+        server = HTTPServer(("127.0.0.1", 0), Bridge)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        self.gw.mc_bridge = (f"http://127.0.0.1:{server.server_port}", "secret")
+        run = lambda name, args, ctx: asyncio.run(self.gw.toolbox.run(name, args, ctx))
+        steve = ToolContext("mc:Steve", "Steve", "mc")
+        self.assertIn("container.open", run("mc_open_block", {"x": 1, "y": 64, "z": 2}, steve))
+        self.assertIn("container.transfer", run("mc_container_transfer", {"direction": "take", "item": "minecraft:oak_log"}, steve))
+        self.assertIn("recipes.query", run("mc_recipes", {"items": "minecraft:crafting_table, minecraft:stick"}, steve))
+        self.assertEqual(seen[0], ("Bearer secret", "container.open", {"x": 1, "y": 64, "z": 2}))
+        self.assertEqual(seen[2][2], {"items": ["minecraft:crafting_table", "minecraft:stick"]})
+        stranger = ToolContext("30003", "路人", "100")
+        self.assertNotIn("mc_open_block", {t.name for t in self.gw.toolbox.available(stranger)})
+        self.gw.firewall.set_locked(True)
+        self.assertIn("紧急封锁", run("mc_open_block", {"x": 1, "y": 64, "z": 2}, steve))
+        self.gw.firewall.set_locked(False)
+        self.assertEqual(len(seen), 3)
+
     def test_admin_tools_are_never_hers(self):
         names = {t.name for t in self.gw.toolbox.available(ToolContext("10001", "创造者"))} | \
                 {t.name for t in self.gw.toolbox.available(ToolContext("mc:Steve", "Steve", "mc"))}

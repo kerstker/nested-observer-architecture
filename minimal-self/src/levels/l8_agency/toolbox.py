@@ -680,6 +680,9 @@ class Toolbox:
         self.tools = {t.name: t for t in (tools or TOOLS)}
         for t in self.tools.values():
             t.read_only = t.name in READ_BUILTIN
+        if tools is None:                       # her game body's chests, crafting and recipes (see mc_extra.py)
+            from src.levels.l8_agency import mc_extra
+            self.tools.update({t.name: t for t in mc_extra.tools()})
         self._hub_sig = None
         self._hub_cache: Dict[str, Tool] = {}
 

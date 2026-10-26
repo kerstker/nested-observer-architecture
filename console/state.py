@@ -58,6 +58,8 @@ def snapshot(gw) -> Dict[str, Any]:
         "needs": {"hunger": h.hunger, "social": h.social_need, "curiosity": h.curiosity_need, "hygiene": h.hygiene_need},
         "emotions": gw.emotion.to_dict(),
         "mood": gw.emotion.get_compound_state(),
+        "feeling": gw.emotion.describe(),
+        "mood_valence": gw.emotion.mood_valence,
         "valence": gw.emotion.valence(),
         "arousal": gw.emotion.arousal(),
         "anxiety": gw.existential_anxiety,

@@ -128,7 +128,7 @@
       <h2>状态曲线<select id="hist-hours" aria-label="时间范围"><option value="6">6 小时</option><option value="24" selected>24 小时</option><option value="72">3 天</option><option value="168">7 天</option></select></h2>
       <div id="hist"></div>
     </section>
-    <section><h2>情绪</h2><div id="emotions"></div></section>
+    <section><h2>情绪</h2><div id="feeling" style="margin-bottom:10px"></div><div id="emotions"></div></section>
     <section><h2>需求</h2><div id="needs"></div></section>
     <section>
       <h2>人格（随经历缓慢变化）</h2>
@@ -544,6 +544,7 @@ function render(s) {
     bar("存在焦虑", s.anxiety, { color: "var(--violet)" }),
     bar("紧张", s.tension, { color: "var(--bad)" }),
   ]);
+  $("feeling").textContent = "她现在：" + (s.feeling || "");
   fill("emotions", Object.entries(EMO).map(([k, name]) => bar(name, s.emotions[k] || 0)));
   fill("needs", Object.entries(NEED).map(([k, name]) =>
     bar(name, s.needs[k] || 0, { color: s.needs[k] > 0.7 ? "var(--bad)" : "var(--warn)" })));

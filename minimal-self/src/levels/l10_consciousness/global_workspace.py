@@ -65,6 +65,11 @@ def format_duration(seconds: float) -> str:
         return f"{hours} 小时 {minutes} 分钟" if minutes else f"{hours} 小时"
     return f"{max(1, minutes)} 分钟"
 
+APOLOGY = re.compile(r"对不起|抱歉|我错了|是我不好|别生气|原谅我|不该那样说|我道歉")
+COMFORT = re.compile(r"别难过|别伤心|别怕|没事的|抱抱你|摸摸头|会好的|我陪你|别担心")
+THANKS = re.compile(r"谢谢|感谢|多亏|辛苦了")
+PRAISE = re.compile(r"好厉害|真棒|真聪明|好可爱|最可爱|喜欢你|爱你|最好了|你真好|好乖")
+
 class GlobalWorkspace:
     """
     Level 10: Consciousness / Global Workspace
@@ -142,6 +147,7 @@ class GlobalWorkspace:
         # What she asks of the person who maintains her (see l17_self_improvement/maintainer.py)
         self.maintainer = Maintainer(db_path)
         self.last_finding_check = 0.0
+        self._silence_hurt = {"day": "", "total": 0.0}
         self.self_check_interval = 6 * 3600
         self.last_self_check = 0.0
         self.self_improving: Optional[Dict[str, Any]] = None
@@ -260,13 +266,23 @@ class GlobalWorkspace:
     def _update_temperament(self):
         """Her resting mood follows from who she is: warmth and liveliness lift it, and it moves as she changes."""
         t = self._traits()
-        self.emotion.baseline = {"joy": 0.05 + 0.15 * t.get("affection", 0.5) + 0.1 * t.get("energy", 0.5)}
+        self._temper_joy = 0.05 + 0.15 * t.get("affection", 0.5) + 0.1 * t.get("energy", 0.5)
+        self._body_temperament()
+
+    def _body_temperament(self):
+        """What the body and the needs do to the resting mood, without any event: being worn out or hungry
+        shortens the temper and dulls the joy, and going long without anyone to talk to is lonely."""
+        tired = max(0.0, (25.0 - self.metabolism.energy) / 25.0)
+        hungry = max(0.0, (self.homeostasis.hunger - 0.7) / 0.3)
+        lonely = max(0.0, (self.homeostasis.social_need - 0.6) / 0.4)
+        self.emotion.baseline = {"joy": max(0.0, getattr(self, "_temper_joy", 0.15) - 0.1 * tired),
+                                 "anger": 0.1 * max(tired, hungry), "sorrow": 0.15 * lonely}
 
     def _expected_edge(self) -> float:
         """How sharp she usually is; sharper is in character only when she is actually upset."""
         t = self._traits()
         edge = 0.1 + 0.2 * t.get("tsundere", 0.5) - 0.15 * t.get("affection", 0.5)
-        if self.emotion.valence() < -0.3:
+        if self.emotion.valence() < -0.3 or self.emotion.mood_valence < -0.25:
             edge += 0.4
         return max(0.0, edge)
 
@@ -293,6 +309,7 @@ class GlobalWorkspace:
             "is_sleeping": self.metabolism.is_sleeping,
             "needs": {"hunger": h.hunger, "social": h.social_need, "hygiene": h.hygiene_need, "curiosity": h.curiosity_need},
             "emotion": self.emotion.to_dict(),
+            "mood": self.emotion.mood_dict(),
             "tension": self.values.tension,
             "autonomy": self.values.autonomy,
             "existential_anxiety": self.existential_anxiety,
@@ -339,6 +356,7 @@ class GlobalWorkspace:
         h.curiosity_need = needs.get("curiosity", 0.0)
         h.last_update = last_t                  # needs keep growing over the offline time
         self.emotion.load_dict(snap.get("emotion", {}))
+        self.emotion.load_mood(snap.get("mood", {}))
         self.emotion.last_decay = last_t        # ... and emotions keep fading
         self.values.tension = snap.get("tension", 0.0)
         self.values.autonomy = snap.get("autonomy", self.values.autonomy)
@@ -416,10 +434,17 @@ class GlobalWorkspace:
             trust = max(self.drives.q("social", "chat", user_id), self.user_models.response_probability(user_id))
             self._shift_anxiety(-0.25 * (0.5 + trust), f"{nickname} 安慰我：{text[:30]}")
 
+    @staticmethod
+    def _cause_source(cause: str) -> Optional[str]:
+        """The kind of event ("预测落空：…" -> "预测落空"): repeats of a kind lose their sting. Events with no
+        such label (someone petting her) are each new."""
+        head, sep, _ = (cause or "").partition("：")
+        return head if sep and len(head) <= 8 else None
+
     def _feel(self, delta: EmotionState, cause: str):
         """Apply an emotion change and record why it happened."""
         before = self.emotion.to_dict()
-        self.emotion.update(delta)
+        self.emotion.update(delta, source=self._cause_source(cause))
         after = self.emotion.to_dict()
         try:
             self.causes.log({k: after[k] - before[k] for k in after}, cause)
@@ -453,7 +478,8 @@ class GlobalWorkspace:
              await self.bus.publish(EventType.ENERGY_LOW, {**status, **needs})
 
         # L4 Emotion: drift back toward neutral with time, independent of input
-        self.emotion.decay(now)
+        self._body_temperament()
+        self.emotion.decay(now, asleep=self.metabolism.is_sleeping)
         self.existential_anxiety *= 0.5 ** (dt / self.anxiety_half_life)
 
         # L7 Prediction errors: answers that never came
@@ -744,7 +770,14 @@ class GlobalWorkspace:
         name = self._nickname(user_id)
         expected, elapsed = format_duration(err["expected_latency"]), format_duration(err["elapsed"])
         text = f"{name} 平时大约 {expected} 就会回我，可已经过了 {elapsed} 还没回……"
-        self._feel(EmotionState(sorrow=0.3 * s, surprise=0.2 * s), f"预测落空：{text}")
+        # Hurt by silence has a daily limit: after a few, she shrugs (and a busy day is not a lonely one)
+        today = time.strftime("%Y%m%d", time.localtime(clock.now()))
+        if self._silence_hurt.get("day") != today:
+            self._silence_hurt = {"day": today, "total": 0.0}
+        hurt = min(0.2 * s, max(0.0, self.SILENCE_HURT_PER_DAY - self._silence_hurt["total"]))
+        if hurt > 0.005:
+            self._silence_hurt["total"] += hurt
+            self._feel(EmotionState(sorrow=hurt, surprise=0.15 * s), f"预测落空：{text}")
         self.homeostasis.social_need = min(1.0, self.homeostasis.social_need + 0.1)
         self.episodes.add(text, kind="prediction", user_id=user_id, valence=-0.3 * s, arousal=0.2 * s, surprise=s)
         self.pending_candidates.append(Candidate("prediction", "ignored", text, 0.3 + 0.6 * s,
@@ -1772,7 +1805,7 @@ class GlobalWorkspace:
             tom_analysis["emotion"] = self.subtext.tom_emotion(reading)       # what ta feels, not just the words
         self.emotion.decay()
         cause = self._describe_appraisal(nickname, sensation, conflict, tom_analysis["emotion"])
-        self._feel(self._appraise(sensation, conflict, tom_analysis["emotion"]), cause or f"{nickname} 和我说话")
+        self._feel(self._appraise(sensation, conflict, tom_analysis["emotion"], user_input, user_id), cause or f"{nickname} 和我说话")
         self.homeostasis.alleviate("social", 0.1)
         self._appraise_existence(user_input, user_id, nickname)
         for name, intensity in self.values.last_appraisal["threatened"].items():
@@ -2014,7 +2047,9 @@ If not, output "NO".
                           group_id=group_id, valence=self.emotion.valence(), arousal=self.emotion.arousal(),
                           surprise=surprise, conflict=conflict)
         # Predict the answer to what I just said (if it invites one)
-        expects_reply = "?" in final_response or "？" in final_response
+        # Only a question put to one person in private waits for that person's answer: nobody in a group
+        # owes her a reply to a passing question, and she does not sit there counting
+        expects_reply = group_id is None and ("?" in final_response or "？" in final_response)
         self.user_models.on_noa_message(user_id, clock.now(), "reply", expects_reply)
 
         self._save_state("message")
@@ -2050,7 +2085,8 @@ If not, output "NO".
         self.values.update_tension(conflict)
         return conflict
 
-    def _appraise(self, sensation: Optional[dict], conflict: float, user_emotion: str) -> EmotionState:
+    def _appraise(self, sensation: Optional[dict], conflict: float, user_emotion: str, text: str = "",
+                  user_id: str = None) -> EmotionState:
         """
         L4 appraisal: turn what just happened into an emotion change.
         Sensation (L1), value conflict (L5) and the user's guessed mood (L7) all contribute.
@@ -2067,14 +2103,28 @@ If not, output "NO".
         if conflict:
             delta.anger += 0.6 * conflict
             delta.disgust += 0.3 * conflict
-        # Emotional contagion: partially mirror the user's mood
+        # Emotional contagion: partially mirror the user's mood - more for someone she is close to
+        close = self.user_models.response_probability(user_id) if user_id else 0.5
+        share = 0.05 + 0.2 * close
         if user_emotion == "sad":
-            delta.sorrow += 0.15
+            delta.sorrow += share
         elif user_emotion == "happy":
-            delta.joy += 0.15
+            delta.joy += share
         elif user_emotion == "angry":
-            delta.fear += 0.1
-            delta.surprise += 0.1
+            delta.fear += 0.5 * share
+            delta.surprise += 0.5 * share
+        # What people say to her matters beyond the mood it shows: an apology softens, thanks and praise warm
+        # (unless it sounds like mockery), comfort calms. These are what make an argument end.
+        if text and not conflict:
+            if APOLOGY.search(text):
+                delta.anger -= 0.4
+                delta.sorrow -= 0.2
+                delta.joy += 0.1
+            if COMFORT.search(text):
+                delta.sorrow -= 0.15
+                delta.fear -= 0.15
+            if (THANKS.search(text) or PRAISE.search(text)) and "可能带讽刺或情绪" not in self.subtext.risky(text):
+                delta.joy += 0.1 if THANKS.search(text) and not PRAISE.search(text) else 0.15
         return delta
 
     @staticmethod
@@ -2114,11 +2164,12 @@ If not, output "NO".
         "energy": ("活力", "有精神，爱玩爱聊"),
     }
 
+    SILENCE_HURT_PER_DAY = 0.3
+
     def _feeling_words(self) -> str:
         """Her state as she would feel it, not as a dashboard of numbers."""
         v, a = self.emotion.valence(), self.emotion.arousal()
-        mood = ("挺开心的" if v > 0.5 else "心情不错" if v > 0.15 else "有点低落" if v < -0.4 else
-                "有点不高兴" if v < -0.15 else "心情平平")
+        mood = self.emotion.describe()
         if a > 0.6:
             mood += "，有点兴奋" if v > 0 else "，心里有点乱"
         if self.style_edge > self._expected_edge() + 0.25:

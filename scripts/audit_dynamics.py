@@ -83,33 +83,44 @@ def check_latency(db):
     print(f"  surprise > 0.3: {surprising} ({surprising / max(1, n):.0%}); mean surprise {sum(surprises) / max(1, n):.2f}")
 
 def check_emotion(db):
+    """The last 3 days' real pushes through the emotion engine: as she was (no opposites, no habituation) and as she is."""
     conn = sqlite3.connect(db)
     since = time.time() - 3 * 86400
-    events = conn.execute("SELECT t, variable, delta FROM state_causes WHERE t > ? ORDER BY t", (since,)).fetchall()
+    events = conn.execute("SELECT t, variable, delta, cause FROM state_causes WHERE t > ? ORDER BY t", (since,)).fetchall()
     conn.close()
     names = {"joy", "anger", "sorrow", "fear", "surprise", "disgust"}
-    eng = EmotionEngine()
-    eng.baseline = {"joy": 0.3}
-    eng.last_decay = events[0][0] if events else 0
-    samples = collections.defaultdict(list)
-    i, t = 0, events[0][0] if events else 0
-    end = events[-1][0] if events else 0
-    while t < end:
-        while i < len(events) and events[i][0] <= t:
-            _, var, delta = events[i]
-            eng.decay(events[i][0])
-            if var in names:
-                eng.update(EmotionState(**{var: max(0.0, delta)}))
-            i += 1
-        eng.decay(t)
-        for k, v in eng.to_dict().items():
-            samples[k].append(v)
-        t += 300
     print(f"== 3. emotion: the last 3 days' {len(events)} real pushes, replayed (sampled every 5 min)")
-    for k in ("joy", "surprise", "sorrow"):
-        vs = sorted(samples[k])
-        n = len(vs)
-        print(f"  {k:9} median {vs[n // 2]:.2f}   p90 {vs[int(n * .9)]:.2f}   at >=0.9: {sum(v >= .9 for v in vs) / n:5.0%}   at >=0.5: {sum(v >= .5 for v in vs) / n:5.0%}")
+    for label, human in (("as before", False), ("now", True)):
+        eng = EmotionEngine()
+        if not human:
+            eng.INHIBITION, eng.HABITUATION = 0.0, 0.0
+        eng.baseline = {"joy": 0.3}
+        eng.last_decay = events[0][0] if events else 0
+        samples = collections.defaultdict(list)
+        mixed = 0
+        i, t = 0, events[0][0] if events else 0
+        end = events[-1][0] if events else 0
+        while t < end:
+            while i < len(events) and events[i][0] <= t:
+                _, var, delta, cause = events[i]
+                clock.set_clock(SimClock(events[i][0]))
+                eng.decay(events[i][0])
+                head, sep, _rest = (cause or "").partition("：")
+                if var in names:
+                    eng.update(EmotionState(**{var: max(0.0, delta)}), source=head if sep and len(head) <= 8 else None)
+                i += 1
+            eng.decay(t)
+            for k, v in eng.to_dict().items():
+                samples[k].append(v)
+            mixed += eng.state.joy >= 0.4 and eng.state.sorrow >= 0.4
+            t += 300
+        n = max(1, len(samples["joy"]))
+        print(f"  [{label}]")
+        for k in ("joy", "surprise", "sorrow"):
+            vs = sorted(samples[k])
+            m = len(vs)
+            print(f"    {k:9} median {vs[m // 2]:.2f}   p90 {vs[int(m * .9)]:.2f}   at >=0.5: {sum(v >= .5 for v in vs) / m:5.0%}")
+        print(f"    joy and sorrow both >= 0.4 at once: {mixed / n:.0%} of the time")
 
 def check_traits(db, days=30):
     conn = sqlite3.connect(db)

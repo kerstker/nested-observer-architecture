@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="480" viewBox="0 0 680 480" role="img"><title>权限与防火墙</title><desc>五类提出要求的人经过同一道防火墙的五项检查，才能用到浏览器、文件与脚本、或游戏。</desc>
+<style>
+text{font-family:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif}
+.t{font-size:14px;fill:#2C2C2A}.ts{font-size:12px;fill:#5F5E5A}.th{font-size:14px;font-weight:500;fill:#2C2C2A}
+.box{fill:#FFFFFF;stroke:#B4B2A9}
+.arr{stroke:#5F5E5A;stroke-width:1.5;fill:none}
+.c-gray>rect{fill:#F1EFE8;stroke:#888780}.c-gray .th{fill:#444441}.c-gray .ts{fill:#5F5E5A}
+.c-purple>rect{fill:#EEEDFE;stroke:#534AB7}.c-purple .th{fill:#3C3489}.c-purple .ts{fill:#534AB7}
+.c-teal>rect{fill:#E1F5EE;stroke:#0F6E56}.c-teal .th{fill:#085041}.c-teal .ts{fill:#0F6E56}
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect width="680" height="480" fill="#FFFFFF"/>
+<g class="c-gray"><rect x="30" y="40" width="150" height="56" rx="8" stroke-width="0.5"/><text class="th" x="105.0" y="59.0" text-anchor="middle" dominant-baseline="central">创造者</text><text class="ts" x="105.0" y="79.0" text-anchor="middle" dominant-baseline="central">配置的 QQ 号 · 控制台</text></g>
+<line x1="180" y1="68" x2="236" y2="68" class="arr" marker-end="url(#arrow)"/>
+<g class="c-gray"><rect x="30" y="112" width="150" height="56" rx="8" stroke-width="0.5"/><text class="th" x="105.0" y="131.0" text-anchor="middle" dominant-baseline="central">受信任的人</text><text class="ts" x="105.0" y="151.0" text-anchor="middle" dominant-baseline="central">名单内 · 私聊</text></g>
+<line x1="180" y1="140" x2="236" y2="140" class="arr" marker-end="url(#arrow)"/>
+<g class="c-gray"><rect x="30" y="184" width="150" height="56" rx="8" stroke-width="0.5"/><text class="th" x="105.0" y="203.0" text-anchor="middle" dominant-baseline="central">她自己</text><text class="ts" x="105.0" y="223.0" text-anchor="middle" dominant-baseline="central">漫游 · 游戏自玩</text></g>
+<line x1="180" y1="212" x2="236" y2="212" class="arr" marker-end="url(#arrow)"/>
+<g class="c-gray"><rect x="30" y="256" width="150" height="56" rx="8" stroke-width="0.5"/><text class="th" x="105.0" y="275.0" text-anchor="middle" dominant-baseline="central">游戏玩家</text><text class="ts" x="105.0" y="295.0" text-anchor="middle" dominant-baseline="central">名单内</text></g>
+<line x1="180" y1="284" x2="236" y2="284" class="arr" marker-end="url(#arrow)"/>
+<g class="c-gray"><rect x="30" y="328" width="150" height="56" rx="8" stroke-width="0.5"/><text class="th" x="105.0" y="347.0" text-anchor="middle" dominant-baseline="central">其他人和群</text><text class="ts" x="105.0" y="367.0" text-anchor="middle" dominant-baseline="central">每天限次</text></g>
+<line x1="180" y1="356" x2="236" y2="356" class="arr" marker-end="url(#arrow)"/>
+<g class="c-teal"><rect x="240" y="40" width="200" height="344" rx="16" stroke-width="0.5"/><text class="th" x="260" y="62" dominant-baseline="central">防火墙</text></g>
+<text class="ts" x="340" y="104" text-anchor="middle" dominant-baseline="central">1 扫描网页和文件里的命令</text>
+<text class="ts" x="340" y="146" text-anchor="middle" dominant-baseline="central">2 代码先检查再关进守卫</text>
+<text class="ts" x="340" y="188" text-anchor="middle" dominant-baseline="central">3 她自己的端口不能碰</text>
+<text class="ts" x="340" y="230" text-anchor="middle" dominant-baseline="central">4 保护记忆库和密钥</text>
+<text class="ts" x="340" y="272" text-anchor="middle" dominant-baseline="central">5 说出口的话抹掉密钥</text>
+<text class="ts" x="340" y="330" text-anchor="middle" dominant-baseline="central">命中就整轮只读</text>
+<text class="ts" x="340" y="352" text-anchor="middle" dominant-baseline="central">紧急封锁一键停用</text>
+<line x1="440" y1="110" x2="496" y2="110" class="arr" marker-end="url(#arrow)"/>
+<g class="c-gray"><rect x="500" y="70" width="150" height="80" rx="8" stroke-width="0.5"/><text class="th" x="575.0" y="91.0" text-anchor="middle" dominant-baseline="central">浏览器</text><text class="ts" x="575.0" y="111.0" text-anchor="middle" dominant-baseline="central">看 填表 上传</text><text class="ts" x="575.0" y="130.0" text-anchor="middle" dominant-baseline="central">按档位放开</text></g>
+<line x1="440" y1="212" x2="496" y2="212" class="arr" marker-end="url(#arrow)"/>
+<g class="c-gray"><rect x="500" y="172" width="150" height="80" rx="8" stroke-width="0.5"/><text class="th" x="575.0" y="193.0" text-anchor="middle" dominant-baseline="central">文件与脚本</text><text class="ts" x="575.0" y="213.0" text-anchor="middle" dominant-baseline="central">读写 运行 Python</text><text class="ts" x="575.0" y="232.0" text-anchor="middle" dominant-baseline="central">只给创造者</text></g>
+<line x1="440" y1="314" x2="496" y2="314" class="arr" marker-end="url(#arrow)"/>
+<g class="c-gray"><rect x="500" y="274" width="150" height="80" rx="8" stroke-width="0.5"/><text class="th" x="575.0" y="295.0" text-anchor="middle" dominant-baseline="central">Minecraft</text><text class="ts" x="575.0" y="315.0" text-anchor="middle" dominant-baseline="central">走 挖 放 聊天</text><text class="ts" x="575.0" y="334.0" text-anchor="middle" dominant-baseline="central">默认关闭</text></g>
+<text class="ts" x="40" y="430" text-anchor="start" dominant-baseline="central">创造者对脚本和文件有信任，但识别到注入的那一轮也只读。</text>
+<text class="ts" x="40" y="452" text-anchor="start" dominant-baseline="central">防火墙是防护栏，不是真沙箱，所以脚本只给创造者。</text>
+</svg>

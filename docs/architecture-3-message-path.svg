@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="480" viewBox="0 0 680 480" role="img"><title>一条消息的路径</title><desc>从 QQ 事件到回复被记成经历的九步：感知、判断要不要回、读潜台词、感受与回忆、拼提示词、带权限与防火墙的工具循环、落地、记忆。</desc>
+<style>
+text{font-family:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif}
+.t{font-size:14px;fill:#2C2C2A}.ts{font-size:12px;fill:#5F5E5A}.th{font-size:14px;font-weight:500;fill:#2C2C2A}
+.box{fill:#FFFFFF;stroke:#B4B2A9}
+.arr{stroke:#5F5E5A;stroke-width:1.5;fill:none}
+.c-gray>rect{fill:#F1EFE8;stroke:#888780}.c-gray .th{fill:#444441}.c-gray .ts{fill:#5F5E5A}
+.c-purple>rect{fill:#EEEDFE;stroke:#534AB7}.c-purple .th{fill:#3C3489}.c-purple .ts{fill:#534AB7}
+.c-teal>rect{fill:#E1F5EE;stroke:#0F6E56}.c-teal .th{fill:#085041}.c-teal .ts{fill:#0F6E56}
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect width="680" height="480" fill="#FFFFFF"/>
+<g class="c-gray"><rect x="40" y="30" width="270" height="56" rx="8" stroke-width="0.5"/><text class="th" x="175.0" y="49.0" text-anchor="middle" dominant-baseline="central">1 事件进来</text><text class="ts" x="175.0" y="69.0" text-anchor="middle" dominant-baseline="central">去重 · 限流</text></g>
+<line x1="175" y1="86" x2="175" y2="112" class="arr" marker-end="url(#arrow)"/>
+<g class="c-gray"><rect x="40" y="116" width="270" height="56" rx="8" stroke-width="0.5"/><text class="th" x="175.0" y="135.0" text-anchor="middle" dominant-baseline="central">2 感知翻译</text><text class="ts" x="175.0" y="155.0" text-anchor="middle" dominant-baseline="central">引用 图片 语音 文件读成文字</text></g>
+<line x1="175" y1="172" x2="175" y2="198" class="arr" marker-end="url(#arrow)"/>
+<g class="c-gray"><rect x="40" y="202" width="270" height="56" rx="8" stroke-width="0.5"/><text class="th" x="175.0" y="221.0" text-anchor="middle" dominant-baseline="central">3 要不要管</text><text class="ts" x="175.0" y="241.0" text-anchor="middle" dominant-baseline="central">睡着 静音 限流 插话</text></g>
+<line x1="175" y1="258" x2="175" y2="284" class="arr" marker-end="url(#arrow)"/>
+<g class="c-purple"><rect x="40" y="288" width="270" height="56" rx="8" stroke-width="0.5"/><text class="th" x="175.0" y="307.0" text-anchor="middle" dominant-baseline="central">4 读潜台词</text><text class="ts" x="175.0" y="327.0" text-anchor="middle" dominant-baseline="central">只对约 5% 的消息</text></g>
+<line x1="175" y1="344" x2="175" y2="370" class="arr" marker-end="url(#arrow)"/>
+<g class="c-purple"><rect x="40" y="374" width="270" height="56" rx="8" stroke-width="0.5"/><text class="th" x="175.0" y="393.0" text-anchor="middle" dominant-baseline="central">5 感受与回忆</text><text class="ts" x="175.0" y="413.0" text-anchor="middle" dominant-baseline="central">情绪 预测误差 记忆召回</text></g>
+<path d="M310 402 L340 402 L340 58 L370 58" class="arr" fill="none" marker-end="url(#arrow)"/>
+<g class="c-gray"><rect x="370" y="30" width="270" height="56" rx="8" stroke-width="0.5"/><text class="th" x="505.0" y="49.0" text-anchor="middle" dominant-baseline="central">6 拼提示词</text><text class="ts" x="505.0" y="69.0" text-anchor="middle" dominant-baseline="central">稳定的在前，利于缓存</text></g>
+<line x1="505" y1="86" x2="505" y2="112" class="arr" marker-end="url(#arrow)"/>
+<g class="c-teal"><rect x="370" y="116" width="270" height="86" rx="8" stroke-width="0.5"/><text class="th" x="505.0" y="140.0" text-anchor="middle" dominant-baseline="central">7 工具循环</text><text class="ts" x="505.0" y="160.0" text-anchor="middle" dominant-baseline="central">权限档 → 防火墙 → 执行</text><text class="ts" x="505.0" y="179.0" text-anchor="middle" dominant-baseline="central">→ 扫描结果 → 隐藏密钥</text></g>
+<line x1="505" y1="202" x2="505" y2="228" class="arr" marker-end="url(#arrow)"/>
+<g class="c-gray"><rect x="370" y="232" width="270" height="56" rx="8" stroke-width="0.5"/><text class="th" x="505.0" y="251.0" text-anchor="middle" dominant-baseline="central">8 落地</text><text class="ts" x="505.0" y="271.0" text-anchor="middle" dominant-baseline="central">清洗 分条 打字延迟</text></g>
+<line x1="505" y1="288" x2="505" y2="314" class="arr" marker-end="url(#arrow)"/>
+<g class="c-gray"><rect x="370" y="318" width="270" height="56" rx="8" stroke-width="0.5"/><text class="th" x="505.0" y="337.0" text-anchor="middle" dominant-baseline="central">9 记成经历</text><text class="ts" x="505.0" y="357.0" text-anchor="middle" dominant-baseline="central">对话 状态 因果 决策留痕</text></g>
+<rect x="370" y="402" width="270" height="56" rx="8" fill="none" stroke="#888780" stroke-width="0.5" stroke-dasharray="4 4"/>
+<text class="ts" x="505" y="421" text-anchor="middle" dominant-baseline="central">沉默是合法的结果：</text>
+<text class="ts" x="505" y="441" text-anchor="middle" dominant-baseline="central">3 或 6 之后她可以选择不说</text>
+</svg>

@@ -1,5 +1,6 @@
 """Her body in Minecraft: game chat is heard like any message, answered in game, and she plays on her own."""
 import asyncio
+import json
 import os
 import random
 import sys
@@ -11,7 +12,7 @@ from src.core.clock import SimClock
 from src.core.event_bus import EventBus
 from src.evaluation.scenarios import START, ScriptedLLM
 from src.levels.l8_agency import access
-from src.levels.l8_agency.game import GameBridge, minecraft_server, parse_chat, split_for_chat
+from src.levels.l8_agency.game import GameBridge, mcpfabric_server, minecraft_server, parse_chat, parse_events, split_for_chat
 from src.levels.l8_agency.mcp import McpHub
 from src.levels.l8_agency.toolbox import ToolContext
 from src.levels.l10_consciousness.global_workspace import GlobalWorkspace
@@ -151,6 +152,59 @@ class TestGame(unittest.TestCase):
         menu = self.gw.toolbox.menu(ToolContext("mc:Steve", "Steve", "mc"), True)
         self.assertIn("Minecraft", menu)
         self.assertIn("dig-block", menu)
+
+
+class TestMcpfabric(unittest.TestCase):
+    """The same life in a real modded client: the mcpfabric bridge."""
+
+    def setUp(self):
+        clock.set_clock(SimClock(START + 4 * 3600))
+        self.addCleanup(clock.set_clock, clock.Clock())
+        self.dir = tempfile.mkdtemp(prefix="noa_mcf_")
+        os.environ["NOA_FAKE_MC"] = self.dir
+        os.environ["NOA_FAKE_MC_MODE"] = "mcpfabric"
+        self.addCleanup(os.environ.pop, "NOA_FAKE_MC", None)
+        self.addCleanup(os.environ.pop, "NOA_FAKE_MC_MODE", None)
+        self.gw = GlobalWorkspace(EventBus(), ScriptedLLM("我在呢"), db_path=os.path.join(self.dir, "m.sqlite"),
+                                  rng=random.Random(0))
+        cfg = mcpfabric_server("unused.js", "http://127.0.0.1:25599", "t")
+        cfg.update({"command": sys.executable, "args": [FAKE]})
+        self.hub = McpHub({"minecraft": cfg})
+        self.hub.servers["minecraft"].start()
+        self.addCleanup(self.hub.stop_all)
+        self.gw.mcp = self.hub
+        self.gw.mc_players = ("*",)
+        self.game = GameBridge(self.gw, "Noa", names=("乃爱",), poll_seconds=0)
+
+    def test_chat_events_are_parsed(self):
+        text = json.dumps({"messages": [
+            {"id": 7, "type": "chat", "data": {"text": "<Steve> 乃爱 来", "sender": "Steve"}},
+            {"id": 8, "type": "system_message", "data": {"text": "Alex joined the game"}},
+            {"id": 9, "type": "chat", "data": {"text": "<Alex> hi"}},
+            {"id": 10, "type": "chat", "data": {"player": "Bob", "text": "server side"}}]})
+        self.assertEqual(parse_events(text), [("7", "Steve", "乃爱 来"), ("9", "Alex", "hi"), ("10", "Bob", "server side")])
+        self.assertEqual(parse_events("出错了：bridge not reachable"), [])
+
+    def test_she_hears_and_answers_through_the_mod(self):
+        def poll():
+            async def go():
+                await self.game.poll(clock.now())
+                while self.game.busy:
+                    await asyncio.sleep(0.05)
+            asyncio.run(go())
+        poll()                                                          # history
+        with open(os.path.join(self.dir, "chat.txt"), "a", encoding="utf-8") as f:
+            f.write("t - Steve: 乃爱 你好呀\n")
+        poll()
+        sent = open(os.path.join(self.dir, "sent.txt"), encoding="utf-8").read().splitlines()
+        self.assertEqual(sent, ["我在呢"])
+
+    def test_admin_tools_are_never_hers(self):
+        names = {t.name for t in self.gw.toolbox.available(ToolContext("10001", "创造者"))} | \
+                {t.name for t in self.gw.toolbox.available(ToolContext("mc:Steve", "Steve", "mc"))}
+        self.assertIn("navigate_to", names)
+        self.assertIn("screenshot", names)
+        self.assertFalse({"run_command", "give_item", "set_block", "supervised_command"} & names)
 
 
 if __name__ == "__main__":

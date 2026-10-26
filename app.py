@@ -327,9 +327,16 @@ if config.get('MCP_ENABLED'):
                 os.makedirs(c["cwd"], exist_ok=True)
             servers[name] = c
         if config.get('MC_ENABLED'):
-            from src.levels.l8_agency.game import minecraft_server
-            servers['minecraft'] = minecraft_server(config.get('MC_HOST', 'localhost'), int(config.get('MC_PORT', 25565)),
-                                                    config.get('MC_USERNAME', 'Noa'))
+            from src.levels.l8_agency.game import mcpfabric_server, minecraft_server
+            if config.get('MC_CONTROL', 'mineflayer') == 'mcpfabric':
+                # A mod in her own game client (modded servers); the client is started by a person, not by her
+                servers['minecraft'] = mcpfabric_server(config['MC_MCPFABRIC_SERVER'],
+                                                        config.get('MC_BRIDGE_URL', 'http://127.0.0.1:25599'),
+                                                        config.get('MC_BRIDGE_TOKEN', ''))
+                global_workspace.firewall.own_ports += [25599, 25600]     # her game body is hers, not the browser's
+            else:
+                servers['minecraft'] = minecraft_server(config.get('MC_HOST', 'localhost'), int(config.get('MC_PORT', 25565)),
+                                                        config.get('MC_USERNAME', 'Noa'))
         hub = McpHub(servers, root_dir)
         hub.start_all()
         global_workspace.mcp = hub

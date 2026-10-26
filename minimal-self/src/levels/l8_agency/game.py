@@ -115,6 +115,9 @@ def split_for_chat(text: str, limit: int = 90, max_lines: int = 3) -> List[str]:
         part = part.strip()
         if re.fullmatch(r"[（(].*[）)]", part):
             continue                                   # a stage direction or a note to herself is not said aloud
+        part = re.sub(r"^[（(][^）)]{0,20}[）)]\s*", "", part)   # "（对游戏里说）……": the note in front goes too
+        if not part:
+            continue
         while len(part) > limit:
             cut = max(part.rfind(c, 0, limit) for c in "，。！？,.!? ")
             cut = cut + 1 if cut > limit // 3 else limit
@@ -173,6 +176,8 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
         self.last_clear = 0.0
         self.last_reflex = 0.0
         self.last_look = 0.0
+        self.last_said = 0.0                        # when she last said something in game chat
+        self.in_world = True                        # her client is in the world (not on a loading or disconnected screen)
         self.plays: List[float] = []
         self.chat_busy = False                      # answering someone (a model call is under way)
         self.play_busy = False                      # in a turn of her own
@@ -215,6 +220,16 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
     def addressed(self, text: str) -> bool:
         low = text.lower()
         return any(n.lower() in low for n in self.names)
+
+    NEAR = 12.0              # someone standing this close and talking is talking to her (or at least with her)
+    ANSWER_WINDOW = 90.0     # what is said soon after she spoke in chat is most likely an answer
+
+    def spoken_to(self, text: str, distance: Optional[float], now: float) -> bool:
+        if self.addressed(text):
+            return True
+        if distance is not None and distance <= self.NEAR:
+            return True
+        return now - self.last_said < self.ANSWER_WINDOW
 
     def trusted(self, player: str) -> bool:
         players = getattr(self.gw, "mc_players", ()) or ()
@@ -288,9 +303,11 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
         uid = f"mc:{player}"
         logger.info(f"[Game] {player}: {said[:80]}")
         gw.memory.add_user_profile(uid, uid, player)
+        distance = None
         if self.profile is PROFILES["mcpfabric"]:
-            await asyncio.to_thread(self.look_toward, player)     # turn to whoever is talking, before answering
-        reply = await gw.hear(said, user_id=uid, nickname=player, group_id="mc", addressed=self.addressed(said))
+            distance = await asyncio.to_thread(self.look_toward, player)   # turn to whoever is talking, before answering
+        reply = await gw.hear(said, user_id=uid, nickname=player, group_id="mc",
+                              addressed=self.spoken_to(said, distance, now))
         if reply and not gw._is_silence(reply):
             await self.say(reply)
 
@@ -304,6 +321,8 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
                 logger.error(f"[Game] could not say it: {e}")
                 return
             await asyncio.sleep(0.6)
+        if lines:
+            self.last_said = clock.now()
         if own and lines:
             said = "\n".join(lines)
             self.gw.record_own(said, None, "mc")
@@ -327,12 +346,14 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
         me = self.offline_uuid(self.username)
         return [e for e in got.get("entities") or [] if e.get("type") == "minecraft:player" and e.get("uuid") != me]
 
-    def look_toward(self, player: str):
+    def look_toward(self, player: str) -> Optional[float]:
+        """Turn to look at them; returns how far away they are (None when out of sight)."""
         target = self.offline_uuid(player)
         for e in self._players():
             if e.get("uuid") == target:
                 self._rpc("control.lookAt", {"x": e["x"], "y": e["y"] + 1.6, "z": e["z"]})
-                return
+                return e.get("distance")
+        return None
 
     def reflex(self, now: float):
         """Follow the person she said she would walk with; otherwise, now and then, look at whoever is near."""
@@ -380,7 +401,8 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
         self.plays = [t for t in self.plays if now - t < 3600]
         company = self.people_near > 0 or now - self.last_chat < 600
         gap = self.company_gap if company else self.play_gap
-        return bool(self.ready() and self.connected and not self.busy and not self.follow and not gw.wandering
+        return bool(self.ready() and self.connected and self.in_world and not self.busy and not self.follow
+                    and not gw.wandering
                     and not gw.metabolism.is_sleeping and gw.metabolism.energy >= 25
                     and now - self.last_chat > 15 and now - self.last_play >= gap
                     and len(self.plays) < self.play_per_hour and gw.inference_engine)
@@ -428,6 +450,7 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
         except (ValueError, Exception):
             return None
         screen = info.get("screen")
+        self.in_world = bool(info.get("inWorld"))
         if info.get("inWorld") and screen in self.BLOCKING:
             try:
                 self._call("close_screen", {})

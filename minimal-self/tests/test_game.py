@@ -37,6 +37,7 @@ class TestPieces(unittest.TestCase):
         self.assertEqual(split_for_chat(""), [])
         self.assertEqual(split_for_chat("（已经发过了，就不再多说）"), [])            # seen in the friends' server
         self.assertEqual(split_for_chat("好的\n(nods)\n走吧"), ["好的", "走吧"])
+        self.assertEqual(split_for_chat("（对游戏里说）这片枫树林挺好看的"), ["这片枫树林挺好看的"])   # seen in game
 
     def test_the_hub_entry(self):
         cfg = minecraft_server("mc.example.com", 25570, "Noa")
@@ -319,6 +320,26 @@ class TestMcpfabric(unittest.TestCase):
         self.game.interrupt = False
         out = asyncio.run(self.gw.toolbox.run("navigate_to", {}, ToolContext("self", "乃爱", origin="game")))
         self.assertIn("navigate_to ok", out)
+
+    def test_an_answer_to_her_or_someone_beside_her_is_talking_to_her(self):
+        t = clock.now()
+        self.assertTrue(self.game.spoken_to("乃爱 你好", None, t))
+        self.assertFalse(self.game.spoken_to("我就是kerst", None, t))
+        self.assertTrue(self.game.spoken_to("你面前", 3.0, t))               # standing right in front of her
+        self.assertFalse(self.game.spoken_to("你面前", 40.0, t))
+        self.game.last_said = t - 20                                         # she just asked "anyone around?"
+        self.assertTrue(self.game.spoken_to("我就是kerst", None, t))
+        self.assertFalse(self.game.spoken_to("我就是kerst", None, t + 200))
+
+    def test_no_turn_of_her_own_while_her_client_is_not_in_the_world(self):
+        self.game.connected = True
+        self.game.people_near = 2
+        self.gw.metabolism.energy = 90
+        self.gw.metabolism.is_sleeping = False
+        self.game.in_world = False
+        self.assertFalse(self.game.play_due(clock.now()))
+        self.game.in_world = True
+        self.assertTrue(self.game.play_due(clock.now()))
 
     def test_admin_tools_are_never_hers(self):
         names = {t.name for t in self.gw.toolbox.available(ToolContext("10001", "创造者"))} | \

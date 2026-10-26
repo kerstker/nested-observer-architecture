@@ -151,6 +151,8 @@ class GlobalWorkspace:
         self.mcp_trusted = ()
         self.mcp_steps = 10
         self.workspace_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), "data", "workspace")
+        self.inbox_dir = os.path.join(self.workspace_dir, "inbox")       # files people sent her over QQ
+        self.last_inbox_prune = 0.0
         # Her own time on the web: nobody asked, she goes and looks (a few times a day, a few steps each)
         self.wander = {"enabled": False, "per_day": 3, "steps": 10, "gap": 2 * 3600.0, "curiosity": 0.45}
         self.wandering = False
@@ -444,6 +446,21 @@ class GlobalWorkspace:
             trust = max(self.drives.q("social", "chat", user_id), self.user_models.response_probability(user_id))
             self._shift_anxiety(-0.25 * (0.5 + trust), f"{nickname} 安慰我：{text[:30]}")
 
+    INBOX_KEEP_DAYS = 14
+
+    def _prune_inbox(self, now: float):
+        """Forget received files older than INBOX_KEEP_DAYS (and the folders left empty)."""
+        try:
+            for base, dirs, files in os.walk(self.inbox_dir, topdown=False):
+                for f in files:
+                    p = os.path.join(base, f)
+                    if now - os.path.getmtime(p) > self.INBOX_KEEP_DAYS * 86400:
+                        os.remove(p)
+                if base != self.inbox_dir and not os.listdir(base):
+                    os.rmdir(base)
+        except OSError as e:
+            logger.error(f"[Inbox] prune failed: {e}")
+
     @staticmethod
     def _cause_source(cause: str) -> Optional[str]:
         """The kind of event ("预测落空：…" -> "预测落空"): repeats of a kind lose their sting. Events with no
@@ -584,6 +601,11 @@ class GlobalWorkspace:
                                                              "备份没做成之前，记忆只有一份。"})
             except Exception as e:
                 logger.error(f"[Backup] check failed: {e}")
+
+        # Files people sent her are kept for a while (so she can go back to them), not forever
+        if now - self.last_inbox_prune >= 6 * 3600:
+            self.last_inbox_prune = now
+            await asyncio.to_thread(self._prune_inbox, now)
 
         # Who-is-related-to-whom keeps up with conversation on its own (a few batches every half hour),
         # and stickers she collected get looked at once, so she knows what she is sending

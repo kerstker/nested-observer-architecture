@@ -15,8 +15,11 @@ Everything she can perceive and do on QQ through NapCat (OneBot v11 + NapCat's e
 Requests (friend / group invitations) are never accepted by her on her own: they are reported.
 """
 import asyncio
+import base64
 import json
 import logging
+import os
+import re
 import time
 import uuid
 from collections import deque
@@ -155,7 +158,7 @@ class QQ:
         return "[聊天记录]\n" + "\n".join(lines) + more
 
     async def perceive(self, segments, names: Callable[[str], str] = lambda u: "某人", depth: int = 0,
-                       look: bool = False, caption: bool = True) -> str:
+                       look: bool = False, caption: bool = True, file_notes: Dict[str, str] = None) -> str:
         """What a person would take in from this message.
 
         `look`: really listen to voice / look at pictures (slower; for messages she is paying attention to).
@@ -193,7 +196,8 @@ class QQ:
             elif t == "video":
                 parts.append("[发了一段视频]")
             elif t == "file":
-                parts.append(f"[发了一个文件：{d.get('file') or d.get('name') or ''}]")
+                parts.append((file_notes or {}).get(str(d.get("file_id") or d.get("file")))
+                             or f"[发了一个文件：{d.get('file') or d.get('name') or ''}]")
             elif t == "image":
                 photo = str(d.get("sub_type", "0")) == "0"
                 # Stickers are often animated GIFs: QQ's OCR never returns for those, so wait less.
@@ -219,6 +223,92 @@ class QQ:
             elif t == "poke":
                 parts.append("[戳了一下]")
         return "".join(parts).strip()
+
+    # --- files people send her ----------------------------------------------------------
+
+    MAX_FILE = 25 * 1024 * 1024
+
+    @staticmethod
+    def safe_name(name: str) -> str:
+        """A file name that cannot point anywhere but into its own folder."""
+        name = re.split(r"[\\/]", str(name or "file"))[-1]
+        name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(". ") or "file"
+        return name[:100]
+
+    async def fetch_file(self, d: Dict[str, Any], group_id: Optional[str], user_id: str):
+        """The bytes of a file in a message. Returns (bytes, None) or (None, why not)."""
+        file_id = d.get("file_id") or d.get("file")
+        try:
+            size = int(d.get("file_size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        if size > self.MAX_FILE:
+            return None, f"文件太大了（{size / 1024 / 1024:.0f} MB，我最多收 {self.MAX_FILE // 1024 // 1024} MB）"
+        info = await self.call("get_file", {"file_id": file_id}, timeout=40) or {}
+        path = info.get("file")
+        if path and os.path.isfile(path):                          # NapCat runs on this machine: read it directly
+            if os.path.getsize(path) > self.MAX_FILE:
+                return None, "文件太大了"
+            return await asyncio.to_thread(lambda: open(path, "rb").read()), None
+        if info.get("base64"):
+            try:
+                return base64.b64decode(info["base64"]), None
+            except ValueError:
+                pass
+        url = info.get("url") or ""
+        if not url.startswith("http"):
+            url = ""
+            if group_id:
+                got = await self.call("get_group_file_url", {"group_id": int(group_id), "file_id": file_id}, timeout=15)
+            else:
+                got = await self.call("get_private_file_url", {"user_id": int(user_id), "file_id": file_id}, timeout=15)
+            url = (got or {}).get("url") or ""
+        if not url.startswith("http"):
+            return None, "没能从 QQ 取到这个文件（可能过期了或者没权限）"
+        return await asyncio.to_thread(self._download, url)
+
+    def _download(self, url: str):
+        import requests
+        try:
+            with requests.get(url, stream=True, timeout=30) as r:
+                if r.status_code != 200:
+                    return None, f"下载失败（HTTP {r.status_code}）"
+                data = b""
+                for chunk in r.iter_content(65536):
+                    data += chunk
+                    if len(data) > self.MAX_FILE:
+                        return None, "文件太大了"
+                return data, None
+        except Exception as e:
+            return None, f"下载失败：{type(e).__name__}"
+
+    async def file_notes(self, segments, group_id: Optional[str], user_id: str, inbox: str, message_id: str = "") -> Dict[str, str]:
+        """Fetch the files of this message into `inbox`, read them, and say what is in them.
+        Returns {file_id: text for the message}. A file that cannot be had is still reported honestly."""
+        from src.levels.l1_perception import documents
+        notes: Dict[str, str] = {}
+        for seg in segments or []:
+            if not isinstance(seg, dict) or seg.get("type") != "file":
+                continue
+            d = seg.get("data") or {}
+            key = str(d.get("file_id") or d.get("file"))
+            name = self.safe_name(d.get("file") or d.get("name") or "file")
+            data, why = await self.fetch_file(d, group_id, user_id)
+            if data is None:
+                notes[key] = f"[发了一个文件：{name}（我没能打开：{why}）]"
+                continue
+            folder = os.path.join(inbox, str(group_id or user_id))
+            os.makedirs(folder, exist_ok=True)
+            stored = f"{message_id or int(time.time())}-{name}"
+            await asyncio.to_thread(lambda: open(os.path.join(folder, stored), "wb").write(data))
+            result = await asyncio.to_thread(documents.extract, data, name)
+            if result["kind"] == "image":
+                words = await self.ocr(os.path.join(folder, stored), timeout=10.0)
+                if words:
+                    result = {"kind": "image", "text": words, "note": "图片里识别出的文字"}
+            notes[key] = (f"[发了一个文件：{name}（{documents.preview(result, len(data))}）"
+                          f"\n要看完整内容用 read_attachment 工具，文件名 {name}]")
+        return notes
 
     async def media(self, segments, limit: int = 2) -> List[Dict[str, Any]]:
         """The pictures in this message, as bytes: what she looks at when the model can see for itself.

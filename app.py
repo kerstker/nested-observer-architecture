@@ -551,8 +551,11 @@ async def custom_message_handler(robot_id: str, message_event: MessageEvent):
         # Her talking model may see the picture itself; if not, the same API describes it for her.
         can_look = bool(getattr(global_workspace.inference_engine, "supports_images", False))
         media = await qq.media(segments, limit=vision_max_images) if (look and can_look) else []
+        # Files sent to her: fetched from QQ and read, so she knows what is in them (not just that one came)
+        file_notes = (await qq.file_notes(segments, gid_now, str(event_dict.get("user_id")), global_workspace.inbox_dir,
+                                          str(event_dict.get("message_id", ""))) if look else {})
         plain_text = await qq.perceive(event_dict.get("message"), names=global_workspace._nickname,
-                                       look=look, caption=not media)
+                                       look=look, caption=not media, file_notes=file_notes)
     except Exception as e:
         logger.error(f"[QQ] perceive failed: {e}")
         plain_text = extract_plain_text(event_dict)

@@ -59,6 +59,7 @@ class Tool:
     timeout: float = None              # seconds; slower things (a browser, a script) ask for more
     web: bool = False                  # what it returns comes from the internet: reading it taints the turn
     danger: bool = False               # not available once the turn is tainted
+    max_result: int = None             # characters kept of what it returns, when more than the usual
     group: str = ""                    # outside tools are listed by group in her prompt, not one by one
 
 def _props(required: List[str] = (), **props) -> Dict[str, Any]:
@@ -444,6 +445,53 @@ def _run_python(gw, ctx: ToolContext, args):
     text = out + (("\n[错误]\n" + err[-1200:]) if err else "")
     return (text or "（运行完了，没有输出）") + ("" if done.returncode == 0 else f"\n（退出码 {done.returncode}）")
 
+# --- files people sent her over QQ ----------------------------------------------------------
+
+ATTACHMENT_PAGE = 4500
+
+def _inbox(gw, ctx: ToolContext) -> str:
+    """The folder of this chat's files (a group's files are the group's; never another chat's)."""
+    return os.path.join(getattr(gw, "inbox_dir", None) or os.path.join(_workspace(gw), "inbox"),
+                        str(ctx.group_id or ctx.user_id))
+
+def _read_attachment(gw, ctx: ToolContext, args):
+    from src.levels.l1_perception import documents
+    folder = _inbox(gw, ctx)
+    files = sorted((os.path.join(folder, f) for f in os.listdir(folder)), key=os.path.getmtime, reverse=True) \
+        if os.path.isdir(folder) else []
+    name = str(args.get("name") or "").strip()
+    if not name:
+        if not files:
+            return "这里还没有收到过文件。"
+        return "收到过的文件（新的在前）：\n" + "\n".join(
+            f"{os.path.basename(f).split('-', 1)[-1]}（{documents.size_words(os.path.getsize(f))}）" for f in files[:15])
+    match = next((f for f in files if os.path.basename(f).split("-", 1)[-1] == name), None) \
+        or next((f for f in files if name in os.path.basename(f)), None)
+    if not match:
+        return f"没找到叫 {name} 的文件。不带 name 调用可以看收到过哪些。"
+    entry = str(args.get("entry") or "").strip() or None
+    cache = gw.__dict__.setdefault("_doc_cache", {})
+    key = (match, os.path.getmtime(match), entry)
+    if key not in cache:
+        with open(match, "rb") as f:
+            data = f.read()
+        if len(cache) >= 8:
+            cache.pop(next(iter(cache)))
+        cache[key] = documents.extract(data, os.path.basename(match).split("-", 1)[-1], entry)
+    result = cache[key]
+    text = result.get("text") or ""
+    try:
+        offset = max(0, int(args.get("offset") or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    if not text:
+        return f"{name}：{result.get('note') or '没有读出文字'}"
+    page = text[offset:offset + ATTACHMENT_PAGE]
+    more = (f"\n（共 {len(text)} 字，这是 {offset}–{offset + len(page)}；接着看用 offset={offset + len(page)}）"
+            if offset + len(page) < len(text) else f"\n（共 {len(text)} 字，到结尾了）")
+    note = f"（{result['note'].lstrip('；')}）\n" if result.get("note") and offset == 0 else ""
+    return f"{name}：\n{note}{page}{more}"
+
 def _owner(gw, ctx):
     return access.tier_of(gw, ctx) == access.OWNER
 
@@ -489,6 +537,10 @@ TOOLS: List[Tool] = [
          _props(["title"], title=_s("一句话说清想请维护者做什么"), detail=_s("为什么需要、遇到了什么、期望变成什么样"),
                 kind=_s("wish 想要的能力 / bug 出错了 / tool 缺工具 / idea 想法")), _ask_maintainer,
          lambda gw, ctx: getattr(gw, "maintainer", None) is not None),
+    Tool("read_attachment", "读别人在这个聊天里发给我的文件（文本、PDF、Word、Excel、PPT、压缩包、电子书……）。"
+         "不带 name 就列出收到过的文件；长文件用 offset 往后翻；压缩包用 entry 指定里面的文件。",
+         _props(name=_s("文件名，不写就列出所有"), offset=_i("从第几个字开始读"), entry=_s("压缩包里的文件名")),
+         _read_attachment, web=True, max_result=5200),
     Tool("workspace_files", "看看我自己的工作文件夹里有什么文件（我写的脚本、整理的资料都在这里）。", _props(), _workspace_files, _owner),
     Tool("read_file", "读我工作文件夹里的一个文件。", _props(["path"], path=_s("相对工作文件夹的路径")), _read_file, _owner),
     Tool("write_file", "把内容写成我工作文件夹里的一个文件（笔记、脚本、整理好的数据）。",
@@ -644,7 +696,8 @@ class Toolbox:
             except Exception as e:
                 result = f"{name} 出错了：{e}"
         result = str(result or "（没有结果）")
-        cap = MCP_RESULT if tool is not None and tool.group else MAX_RESULT
+        cap = (tool.max_result if tool is not None and tool.max_result else
+               MCP_RESULT if tool is not None and tool.group else MAX_RESULT)
         if len(result) > cap:
             result = result[:cap] + "……（后面省略）"
         ctx.used.append(name)

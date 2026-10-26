@@ -113,6 +113,8 @@ def split_for_chat(text: str, limit: int = 90, max_lines: int = 3) -> List[str]:
     lines: List[str] = []
     for part in re.split(r"[\n\r]+", text or ""):
         part = part.strip()
+        if re.fullmatch(r"[（(].*[）)]", part):
+            continue                                   # a stage direction or a note to herself is not said aloud
         while len(part) > limit:
             cut = max(part.rfind(c, 0, limit) for c in "，。！？,.!? ")
             cut = cut + 1 if cut > limit // 3 else limit
@@ -167,6 +169,7 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
         self.last_poll = 0.0
         self.last_chat = 0.0
         self.last_play = 0.0
+        self.last_clear = 0.0
         self.plays: List[float] = []
         self.busy = False
         self.journal: List[Dict[str, Any]] = []
@@ -334,6 +337,11 @@ Response: 要在游戏聊天里说的一句话（可以没有，没有就写“�
         return "\n".join(parts)
 
     async def tick(self, now: float):
+        # A pause menu (her window lost focus) or a chat box left open freezes her body; nobody should have to
+        # come over and press Esc for her
+        if not self.busy and self.ready() and now - self.last_clear >= 8:
+            self.last_clear = now
+            await asyncio.to_thread(self.clear_screen)
         await self.poll(now)
         if self.play_due(now):
             self.busy = True

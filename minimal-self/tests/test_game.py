@@ -35,6 +35,8 @@ class TestPieces(unittest.TestCase):
         self.assertLessEqual(len(lines), 3)
         self.assertTrue(all(len(x) <= 90 for x in lines))
         self.assertEqual(split_for_chat(""), [])
+        self.assertEqual(split_for_chat("（已经发过了，就不再多说）"), [])            # seen in the friends' server
+        self.assertEqual(split_for_chat("好的\n(nods)\n走吧"), ["好的", "走吧"])
 
     def test_the_hub_entry(self):
         cfg = minecraft_server("mc.example.com", 25570, "Noa")

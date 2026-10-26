@@ -27,9 +27,30 @@ SEE_THROUGH = ("air", "grass", "fern", "flower", "torch", "snow", "sapling", "vi
 SOFT = ("leaves", "grass", "fern", "flower", "vine", "bush", "snow", "leaf_litter")    # a player just knocks these out of the way
 
 
-def sight_cells(eye: tuple, target: tuple) -> List[tuple]:
-    """The block cells the line from her eye to the middle of a block passes through (target excluded)."""
-    tx, ty, tz = target[0] + 0.5, target[1] + 0.5, target[2] + 0.5
+def face_point(eye: tuple, target: tuple, rpc=None) -> tuple:
+    """Where a player looks to hit a block: the middle of a face turned toward them that is open (a face pressed
+    against the next block of the trunk cannot be seen). Without `rpc`, the face most turned toward them."""
+    c = (target[0] + 0.5, target[1] + 0.5, target[2] + 0.5)
+    d = (eye[0] - c[0], eye[1] - c[1], eye[2] - c[2])
+    faces = sorted((i for i in range(3) if abs(d[i]) > 0.05), key=lambda i: -abs(d[i])) or [1]
+    if rpc is not None and len(faces) > 1:
+        nbrs = []
+        for i in faces:
+            n = list(target)
+            n[i] += 1 if d[i] > 0 else -1
+            nbrs.append({"x": n[0], "y": n[1], "z": n[2]})
+        got = (rpc("perception.blocks", {"positions": nbrs}) or {}).get("blocks") or []
+        open_faces = [i for i, b in zip(faces, got)
+                      if any(s in str(b.get("id") or "minecraft:air").split(":")[-1] for s in SEE_THROUGH)]
+        faces = open_faces + [i for i in faces if i not in open_faces]
+    p = list(c)
+    p[faces[0]] += 0.49 if d[faces[0]] > 0 else -0.49
+    return tuple(p)
+
+
+def sight_cells(eye: tuple, target: tuple, aim: tuple = None) -> List[tuple]:
+    """The block cells the line from her eye to the point she aims at on a block passes through (target excluded)."""
+    tx, ty, tz = aim or face_point(eye, target)
     dist = math.dist(eye, (tx, ty, tz))
     n = max(2, int(dist / 0.15))
     out: List[tuple] = []
@@ -44,7 +65,7 @@ def sight_cells(eye: tuple, target: tuple) -> List[tuple]:
 
 def first_obstacle(rpc, eye: tuple, target: tuple) -> Optional[tuple]:
     """The first block between her eye and the target that a crosshair would hit instead: (x, y, z, id) or None."""
-    cells = sight_cells(eye, target)
+    cells = sight_cells(eye, target, face_point(eye, target, rpc))
     if not cells:
         return None
     got = (rpc("perception.blocks", {"positions": [{"x": c[0], "y": c[1], "z": c[2]} for c in cells]}) or {}).get("blocks") or []
@@ -74,9 +95,11 @@ class Skills:
         return self._thread is not None and self._thread.is_alive()
 
     def start(self, name: str, **args) -> str:
-        fn = {"chop_tree": self.chop_tree, "collect_drops": self.collect_drops, "go_to_player": self.go_to_player}.get(name)
+        fn = {"chop_tree": self.chop_tree, "collect_drops": self.collect_drops, "go_to_player": self.go_to_player,
+              "mine": self.mine}.get(name)
         if fn is None:
-            return f"不会 {name}。会的有：chop_tree（砍一棵树）、collect_drops（捡掉落物）、go_to_player（走到某人身边）。"
+            return (f"不会 {name}。会的有：chop_tree（砍一棵树）、mine（挖某种方块，blocks 写 id）、collect_drops（捡掉落物）、"
+                    "go_to_player（走到某人身边）。")
         if self.busy() and name == self.current:
             return f"已经在做 {name} 了（{self.progress}），不用再开始一次。"
         if self.busy():
@@ -175,7 +198,8 @@ class Skills:
                 if hit:
                     self.last_blocked = hit
                     return False                # something solid in the way: no mining through it
-        self._smooth_look(x + 0.5, y + 0.5, z + 0.5, 0.3)
+        aim = face_point((me["x"], me["y"] + 1.62, me["z"]), (x, y, z), self.rpc) if me else (x + 0.5, y + 0.5, z + 0.5)
+        self._smooth_look(*aim, 0.3)
         if self.rpc("interact.breakBlock", {"x": x, "y": y, "z": z, "mode": "survival"}) is None:
             return False
         end = time.time() + timeout
@@ -183,7 +207,7 @@ class Skills:
             time.sleep(0.3)
             if self._block(x, y, z) != before:
                 return True
-            self._smooth_look(x + 0.5, y + 0.5, z + 0.5, 0.1)     # keep the eyes on it while the arm works
+            self._smooth_look(*aim, 0.1)                           # keep the eyes on it while the arm works
         self.rpc("interact.stopBreaking", {})
         return False
 
@@ -241,8 +265,24 @@ class Skills:
         columns = {k: v for k, v in columns.items() if now - self.failed.get(k, 0) > 300}
         if not columns:
             return "附近的树我都试过了，走不过去。"
-        (x, z), ys = min(columns.items(), key=lambda kv: (kv[0][0] - me["x"]) ** 2 + (kv[0][1] - me["z"]) ** 2)
-        base = min(ys)
+        # A trunk, not a branch up in the canopy: its lowest log stands on the ground, at about her height
+        def score(kv):
+            (cx, cz), cys = kv
+            return (cx - me["x"]) ** 2 + (cz - me["z"]) ** 2 + 4 * (min(cys) - me["y"]) ** 2
+        trunk = None
+        for (cx, cz), cys in sorted(columns.items(), key=score)[:8]:
+            cbase = min(cys)
+            if abs(cbase - me["y"]) > 5:
+                continue
+            below = self._block(cx, cbase - 1, cz)
+            name = below.split(":")[-1]
+            if below and not below.endswith(":air") and LOG_SUFFIX not in name and "leaves" not in name:
+                trunk = (cx, cz, cbase)
+                break
+            self.failed[(cx, cz)] = now                 # a branch, or a log in the air: not something to walk to
+        if trunk is None:
+            return "附近没有站在地上、够得着的树干。"
+        x, z, base = trunk
         self.progress = f"走去那棵树（{x}, {base}, {z}）"
         if not self._approach(x, base, z):
             self.failed[(x, z)] = now
@@ -266,6 +306,33 @@ class Skills:
             return f"砍了 {logs} 块就停了。"
         picked = self.collect_drops(radius=8)
         return f"砍了 {logs} 块木头。{picked}"
+
+    def mine(self, blocks: str = "", count: int = 8, radius: int = 2) -> str:
+        """Dig some blocks of the given kinds nearby - the ones she can actually see, walking up to them first."""
+        ids = [b.strip() for b in str(blocks or "").split(",") if b.strip()]
+        if not ids:
+            return "要挖什么？blocks 写方块 id。"
+        found = (self.rpc("perception.scan", {"radius": radius, "find": ids, "findLimit": 64}) or {}).get("found") or []
+        me = self._me()
+        if not found or not me:
+            return "附近没找到这些方块。"
+        # exposed ones first (a face open to the air: what a player can see without digging a tunnel), then near ones
+        found.sort(key=lambda f: (not f.get("exposed"), (f["x"] - me["x"]) ** 2 + 2 * (f["y"] - me["y"]) ** 2 + (f["z"] - me["z"]) ** 2))
+        got = tried = 0
+        for f in found:
+            if self._stop.is_set() or got >= count or tried >= count * 3:
+                break
+            tried += 1
+            if abs(f["y"] - me["y"]) > 6:
+                continue
+            self.progress = f"去挖 {f['id'].split(':')[-1]}（已挖 {got}）"
+            if not self._approach(f["x"], f["y"], f["z"]):
+                continue
+            if self._break(f["x"], f["y"], f["z"]):
+                got += 1
+            me = self._me() or me
+        picked = self.collect_drops(radius=6) if got else ""
+        return f"挖了 {got} 块。{picked}" if got else "看得见又够得着的一块都没有（要么被挡住，要么太远）。"
 
     def collect_drops(self, radius: float = 10) -> str:
         """Walk over the items lying around nearby so they end up in the backpack."""

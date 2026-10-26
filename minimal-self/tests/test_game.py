@@ -435,9 +435,11 @@ class TestMcpfabric(unittest.TestCase):
     def test_the_mods_background_jobs_are_hers_and_its_own_mind_is_not(self):
         cfg = mcpfabric_server("unused.js", "http://127.0.0.1:25599", "t")
         self.assertEqual(cfg["env"]["MCPFABRIC_AGENT"], "1")             # the runtime that has the jobs is on
-        for job in ("collect_blocks", "craft_item", "travel_to", "plan_craft", "job_status", "job_cancel"):
+        for job in ("craft_item", "travel_to", "plan_craft", "job_status", "job_cancel"):
             self.assertTrue(access.allowed(cfg, access.AUTONOMOUS, job), job)
             self.assertTrue(access.allowed(cfg, access.PLAYER, job), job)
+        # its mining job snaps onto a block and mines through whatever is in the way: her own skills mine instead
+        self.assertFalse(access.allowed(cfg, access.OWNER, "collect_blocks"))
         # the runtime's own memory, goal tree, map and container tools would be a second mind: not hers
         for second_mind in ("agent_brief", "observe", "map_view", "remember", "goal_add", "open_container"):
             self.assertFalse(access.allowed(cfg, access.OWNER, second_mind), second_mind)
@@ -844,11 +846,8 @@ class TestMcpfabric(unittest.TestCase):
         self.game.last_sched = 0
         self.game.play_busy = True                          # a model turn is running: the body still works
         out = asyncio.run(self.game.auto_work(clock.now()))
-        self.assertEqual(out, "collect_blocks")
-        log = open(os.path.join(self.dir, "calls.log"), encoding="utf-8").read()
-        self.assertIn("collect_blocks", log)
-        self.assertIn('"blocks"', log)                      # the tool takes a list of block ids
-        self.assertIn('"minecraft:oak_log"', log)
+        self.assertEqual(out, "mc_skill")                   # her own player-like skill (chop a tree), not the mod's job
+        self.game.skills.stop()
         self.assertEqual(len(self.game.auto_starts), 1)
 
     def test_a_job_that_stops_moving_her_is_cancelled_and_replaced(self):
@@ -856,10 +855,13 @@ class TestMcpfabric(unittest.TestCase):
         self.game.connected = True
         self.game.last_moved = clock.now() - 60
         self.game.last_sched = 0
-        self.game.job_running = lambda: True                # a job claims to be running...
+        calls_log = os.path.join(self.dir, "calls.log")
+        # a job claims to be running (until it is cancelled)...
+        self.game.job_running = lambda: not (os.path.exists(calls_log) and "job_cancel" in open(calls_log, encoding="utf-8").read())
         out = asyncio.run(self.game.auto_work(clock.now()))  # ...but she has not moved for a minute
-        self.assertEqual(out, "collect_blocks")
-        log = open(os.path.join(self.dir, "calls.log"), encoding="utf-8").read()
+        self.assertEqual(out, "mc_skill")
+        self.game.skills.stop()
+        log = open(calls_log, encoding="utf-8").read()
         self.assertIn("job_cancel", log)
 
     def test_a_second_look_right_after_the_first_is_not_taken(self):

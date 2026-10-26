@@ -26,7 +26,7 @@ class FakeWorld:
             return {"blocks": [{"id": self.blocks.get((p["x"], p["y"], p["z"]), "minecraft:air" if p["y"] >= 64 else "minecraft:dirt")}
                                for p in params["positions"]]}
         if method == "interact.breakBlock":
-            if self.blocks.get((params["x"], params["y"], params["z"]), "").endswith("_log"):
+            if self.blocks.get((params["x"], params["y"], params["z"]), "minecraft:air") != "minecraft:air":
                 self.blocks[(params["x"], params["y"], params["z"])] = "minecraft:air"
                 self.items += 1
             return {"started": True}
@@ -122,6 +122,16 @@ class TestSkills(unittest.TestCase):
         wait(s)
         self.assertIn("都试过了", s.last_result)
 
+    def test_a_branch_up_in_the_canopy_is_not_taken_for_a_tree(self):
+        world = FakeWorld(logs=(64, 65, 66), x=9, z=9)                       # a real trunk, a little further away
+        world.blocks[(5, 80, 5)] = "minecraft:oak_log"                         # a branch high up, right next to her
+        world.me = {"x": 5.5, "y": 64.0, "z": 6.5}
+        s = Skills(world.rpc)
+        s.start("chop_tree")
+        wait(s)
+        self.assertIn("砍了 3 块", s.last_result)
+        self.assertEqual(world.blocks[(5, 80, 5)], "minecraft:oak_log")
+
     def test_she_does_not_mine_through_walls(self):
         from src.levels.l8_agency.mc_skills import first_obstacle, sight_cells
         cells = sight_cells((0.5, 65.6, 0.5), (4, 64, 0))
@@ -170,6 +180,17 @@ class TestSkills(unittest.TestCase):
         steps = [abs(b["yaw"] - a["yaw"]) for a, b in zip(looks, looks[1:])]
         self.assertLess(max(steps), 20)                                          # no snap
         self.assertGreater(time.time() - t, 0.2)
+
+    def test_she_mines_the_blocks_she_can_see(self):
+        world = FakeWorld(logs=(64,), x=30, z=30)
+        world.blocks = {(3, 64, 0): "minecraft:coal_ore", (3, 64, 1): "minecraft:coal_ore", (9, 64, 9): "minecraft:stone"}
+        world.me = {"x": 1.5, "y": 64.0, "z": 0.5}
+        s = Skills(world.rpc)
+        s.start("mine", blocks="minecraft:coal_ore", count=2)
+        wait(s)
+        self.assertIn("挖了 2 块", s.last_result)
+        self.assertEqual(world.blocks[(9, 64, 9)], "minecraft:stone")                # only what was asked
+        self.assertIn("要挖什么", s.mine(""))
 
     def test_go_to_someone(self):
         world = FakeWorld()

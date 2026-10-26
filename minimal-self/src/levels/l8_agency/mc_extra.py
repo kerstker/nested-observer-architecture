@@ -143,6 +143,8 @@ def tools():
         if game.job_running():
             return "后台任务正在做（用 job_status 看进度）；先别开新的动作，等它做完，或者先 job_cancel。"
         args = {"player": str(a["player"])} if name == "go_to_player" and a.get("player") else {}
+        if name == "mine":
+            args = {"blocks": str(a.get("blocks") or ""), "count": int(a.get("count") or 8)}
         return game.skills.start(name, **args)
 
     def find(gw, ctx, a):
@@ -175,9 +177,11 @@ def tools():
                     count=_i("最多几个")), transfer, **common()),
         Tool("mc_recipes", "查几样物品的合成配方（返回能用来合成的 ref）。",
              _props(["items"], items=_s("物品 id，逗号分隔，比如 minecraft:crafting_table")), recipes, **common(read_only=True)),
-        Tool("mc_skill", "成套的动作，在后台自己做完：chop_tree 砍附近一整棵树并捡木头，collect_drops 捡地上的东西，"
-             "go_to_player 走到某人身边（写 player），stop 停下，status 看进度。",
-             _props(["name"], name=_s("chop_tree / collect_drops / go_to_player / stop / status"), player=_s("go_to_player 时写玩家名")),
+        Tool("mc_skill", "成套的动作，在后台自己做完（像玩家一样先走过去、看到再动手，不隔空）：chop_tree 砍附近一整棵树并捡木头，"
+             "mine 挖附近某种方块（blocks 写 id，count 几块），collect_drops 捡地上的东西，go_to_player 走到某人身边（写 player），"
+             "stop 停下，status 看进度。",
+             _props(["name"], name=_s("chop_tree / mine / collect_drops / go_to_player / stop / status"),
+                    player=_s("go_to_player 时写玩家名"), blocks=_s("mine 时写方块 id，逗号分隔"), count=_i("mine 时挖几块，默认 8")),
              skill, **common()),
         Tool("mc_find_blocks", "在自己周围找某些方块的位置（比如原木、矿石、箱子），按距离给出坐标。",
              _props(["blocks"], blocks=_s("方块 id，逗号分隔，比如 minecraft:oak_log"), radius=_i("多远以内（格），默认 32"),

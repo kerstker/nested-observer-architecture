@@ -37,6 +37,11 @@ class EvolveRequest(BaseModel):
     task: str = ""
     id: str = ""
 
+class MaintainerReply(BaseModel):
+    id: str
+    status: str
+    note: str = ""
+
 class SettingsRequest(BaseModel):
     idle_thought_interval: Optional[float] = None
     autonomous_groups: Optional[list] = None
@@ -264,6 +269,24 @@ def create_console_router(gw, token: str = None) -> APIRouter:
         return json_response({"enabled": bool(gw.evolve_enabled),
                               "creator": gw.evolve_creator,
                               "proposals": await asyncio.to_thread(bridge.list_proposals)})
+
+    # What she has asked of the person who maintains her, and the answers (see l17_self_improvement/maintainer.py)
+    @router.get("/api/maintainer")
+    async def maintainer_list(request: Request):
+        authorize(request)
+        rows = await asyncio.to_thread(gw.maintainer.list, None, 40)
+        return json_response({"requests": rows})
+
+    @router.post("/api/maintainer")
+    async def maintainer_reply(body: MaintainerReply, request: Request):
+        authorize(request)
+        try:
+            ok = await asyncio.to_thread(gw.maintainer.reply, body.id, body.status, body.note)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if not ok:
+            raise HTTPException(404, "没有这个请求")
+        return json_response({"ok": True})
 
     @router.post("/api/evolve")
     async def evolve_submit(body: EvolveRequest, request: Request):

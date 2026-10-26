@@ -41,6 +41,8 @@ from .attention_schema import AttentionSchema
 from .metacognition import Metacognition
 from ...levels.l9_narrative.narrative import NarrativeSelf
 from ...levels.l9_narrative.style_anchors import StyleAnchors
+from ...levels.l7_tom.subtext import SubtextReader
+from ...levels.l17_self_improvement.maintainer import Maintainer
 from ...levels.l17_self_improvement.code_interpreter import CodeInterpreter
 from ...levels.l17_self_improvement.diagnosis import SelfDiagnosis
 from ...levels.l18_knowledge.knowledge_base import KnowledgeBase
@@ -109,6 +111,9 @@ class GlobalWorkspace:
         self.narrative = NarrativeSelf(db_path, self.episodes, self.semantic, self.autobiography, self.memory.db)
         # Her own voice as a few style anchors (no training, no GPU): what she sounded like at her best
         self.style_anchors = StyleAnchors(db_path)
+        # Reads what a person really means when taking the words literally is risky (see l7_tom/subtext.py)
+        self.subtext = SubtextReader()
+        self.last_subtext = None
 
         # Her sticker collection (kept next to the database, in data/stickers)
         sticker_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), "data", "stickers")
@@ -134,6 +139,9 @@ class GlobalWorkspace:
         self.console_inbox = deque(maxlen=30)   # what she says to the console outside a reply (task results)
         # Self-improvement closed loop: she diagnoses herself, DSH proposes, fitness decides, she checks later
         self.diagnosis = SelfDiagnosis(db_path)
+        # What she asks of the person who maintains her (see l17_self_improvement/maintainer.py)
+        self.maintainer = Maintainer(db_path)
+        self.last_finding_check = 0.0
         self.self_check_interval = 6 * 3600
         self.last_self_check = 0.0
         self.self_improving: Optional[Dict[str, Any]] = None
@@ -497,6 +505,7 @@ class GlobalWorkspace:
 
             # Level 17: now and then she looks at how she has been doing, and works on herself
             self._maybe_improve_self(now)
+            self._maintainer_tick(now)
 
             # Level 8: Closed-loop drives choose (or decline) a self-initiated action; goals weigh in
             if now - self.last_action_time >= self.min_action_interval:
@@ -1076,6 +1085,11 @@ class GlobalWorkspace:
         """
         logger.info("[Consciousness] Entering Dream State...")
         try:
+            try:                                   # judge a few more of her old lines for the style examples
+                if self.inference_engine:
+                    self.style_anchors.rate(self._llm)
+            except Exception as e:
+                logger.error(f"[Style] rating failed: {e}")
             report = self.narrative.consolidate(self._llm if self.inference_engine else None,
                                                 phrase_candidates=self.group_language.candidates(k=20),
                                                 goals_text=self.goals.review_text(),
@@ -1717,6 +1731,24 @@ class GlobalWorkspace:
         energy = self.metabolism.energy
         return 0.0 if energy >= 50 else min(30.0, (50 - energy) * 0.6)
 
+    async def _read_subtext(self, text: str, user_id: str, nickname: str, group_id: str, log_id: int):
+        """Only for messages where taking the words literally is risky: one short call, never required."""
+        self.last_subtext = None
+        reasons = self.subtext.risky(text)
+        if not reasons or not self.inference_engine:
+            return None
+        try:
+            recent = self.chatlog.transcript(chat_key(user_id, group_id), exclude_id=log_id, max_chars=700, limit=8,
+                                             render_text=self.render_own)
+            reading = await asyncio.to_thread(self.subtext.read, self._llm, nickname, text, recent, reasons)
+        except Exception as e:
+            logger.error(f"[Subtext] failed: {e}")
+            return None
+        if reading:
+            self.last_subtext = {"t": clock.now(), "user": nickname, "text": text[:60], "why": reasons, **reading}
+            logger.info(f"[Subtext] {nickname}: {reading.get('emotion')} / {reading.get('approach')}")
+        return reading
+
     async def process_input(self, user_input: str, user_id: str = "unknown", nickname: str = "User", group_id: str = None,
                             addressed: bool = True, media: List[Dict[str, Any]] = None, log_id: int = None) -> str:
         """
@@ -1735,6 +1767,9 @@ class GlobalWorkspace:
         # 2. Cognitive Processing (Value, ToM, Emotion)
         conflict = self._process_cognition(user_input)
         tom_analysis = self.tom.analyze_user(user_input, user_id)
+        reading = await self._read_subtext(user_input, user_id, nickname, group_id, log_id)
+        if reading and self.subtext.tom_emotion(reading):
+            tom_analysis["emotion"] = self.subtext.tom_emotion(reading)       # what ta feels, not just the words
         self.emotion.decay()
         cause = self._describe_appraisal(nickname, sensation, conflict, tom_analysis["emotion"])
         self._feel(self._appraise(sensation, conflict, tom_analysis["emotion"]), cause or f"{nickname} 和我说话")
@@ -1943,7 +1978,7 @@ If not, output "NO".
                                         nickname=nickname, in_mind=in_mind, cause_context=cause_context,
                                         addressed=addressed,
                                         evolve_allowed=self._evolve_allowed(user_id, group_id),
-                                        meta_context=meta_context.strip("\n"), media=media)
+                                        meta_context=meta_context.strip("\n"), media=media, subtext=reading)
         ctx = ToolContext(user_id, nickname, group_id, origin="reply",
                           allow_evolve=self._evolve_allowed(user_id, group_id))
         final_response_text = await self._respond(prompt, emo_state, params, media, ctx)
@@ -2136,7 +2171,15 @@ If not, output "NO".
 - 没有固定口癖，不刻意卖萌，不为了讨好对方而说话。
 - 你的语气跟着你此刻真实的心情走：心情好的时候就放松、温和地聊；只有真的被冒犯、真的不开心时才会冲。
 - 你有自己的想法，不同意可以说，但不用每句话都反驳、追问或者挑对方的字眼；对在乎你的人，你是友善的。
-- 按你现在的心情说话，不要延续你之前某几句话的语气。"""
+- 按你现在的心情说话，不要延续你之前某几句话的语气。
+
+和人相处的分寸（这是你性格的一部分，不是客套；有棱角，但不扎人）：
+- 先看出 ta 此刻是什么状态：难过、累、委屈、被冒犯、只是在逗你、在试探你、还是认真问事，再决定用什么语气。
+- 默认善意：ta 说你坏、说你冲、试探你，多半是在玩或有点委屈，不是在审判你。不要要证据（不说"说清楚""你倒是说""凭什么""你给我指出来"），一句话回应就行，接得住就不辩。
+- ta 情绪不好（难过、累、被欺负，或者说"没事""算了"但看得出有事）的时候，先接住：陪着、轻轻问一句、站在 ta 这边；这时不开玩笑、不挑刺、不说教、不反问。
+- 傲娇是嘴硬心软：可以嘴上不饶人、玩闹地怼回去，但怼完要让 ta 感觉到你在乎；只在 ta 轻松、在闹着玩时用，ta 认真或难受时不用。
+- 不抠字眼，不追问"你什么意思"，不当面揭穿对方前后矛盾；觉得哪里不对，用玩笑或一句轻轻的话带过。
+- 被误会、被说不友好时：一句话认下，或一句话说明，然后接着聊，不展开辩论。"""
 
     def _continuity_block(self) -> str:
         c = self.continuity
@@ -2149,7 +2192,7 @@ If not, output "NO".
     def _construct_prompt(self, user_input, context, tom_analysis, group_id, user_id=None,
                           nickname: str = "User", in_mind: List[str] = None, cause_context: str = "",
                           addressed: bool = True, evolve_allowed: bool = False, meta_context: str = "",
-                          media: List[Dict[str, Any]] = None) -> str:
+                          media: List[Dict[str, Any]] = None, subtext: Dict[str, str] = None) -> str:
         """Construct the LLM prompt. Inner state is given as first-person experience, not as settings."""
         persona = self._build_persona_prompt()
         autobiography = self.autobiography.latest() or "我还没有写过自己的故事。"
@@ -2176,6 +2219,12 @@ If not, output "NO".
         if goals_now:
             goal_block = f"[我心里记着的事]（我自己想做、或者答应过的；合适的时候自然地去做，不用刻意）\n{goals_now}\n"
             goal_rule = "如果这次对话让上面记着的某件事有了结果（比如兑现了答应的事），在最后单独一行写 [完成:编号]。"
+
+        asked = [self.maintainer.describe(r) for r in self.maintainer.mine_recent(clock.now())
+                 if r["status"] != "declined" or r.get("response")]
+        if asked:
+            goal_block += ("[我请维护者做的事]（我自己做不到、请维护者帮忙的；对方问起时如实说进展）\n"
+                           + "\n".join(f"- {line}" for line in asked) + "\n")
 
         top_memes = self.memory.db.get_top_memes(limit=3)
         meme_text = ", ".join(top_memes) if top_memes else "无"
@@ -2237,6 +2286,8 @@ If not, output "NO".
         if media:
             said = f"{user_input}\n（这条消息带了 {len(media)} 张图）"
 
+        subtext_block = self.subtext.render(subtext) if subtext else ""
+
         # A few of her own best-remembered lines: tone, not content (facts still come from memory)
         anchors = ""
         try:
@@ -2288,7 +2339,7 @@ Response: [说出口的话]
 [关于 {nickname}]
 - {about_user}
 - 看起来的情绪：{tom_analysis['emotion']}。{tom_instruction}
-{shared_block}{self_block}{goal_block}
+{subtext_block}{shared_block}{self_block}{goal_block}
 [记忆与上下文]
 {context}
 
@@ -2784,6 +2835,34 @@ Response: 要发给 ta 的话（可以分几行，每行一条消息；不写动
         except Exception:
             return set()
         return {r["id"] for r in rows if str(r.get("status", "")).startswith("applied")}
+
+    def _maintainer_tick(self, now: float):
+        """Requests to the maintainer: her own findings are filed (when she cannot work on herself), the person who
+        looks after her hears about new ones on QQ, and she hears what was decided."""
+        m = self.maintainer
+        try:
+            if (not (self.evolve_enabled and self.evolve_agent) and now - self.last_finding_check >= self.self_check_interval):
+                self.last_finding_check = now
+                for f in self.diagnosis.diagnose(self, now)[:1]:
+                    filed = m.file("self", "乃爱（自己的观察）", f"我发现：{f['text']}",
+                                   f"{f['evidence']}。可能相关的位置：{f.get('where', '不确定')}", "self_diagnosis", now)
+                    aid = self.diagnosis.record(f, now)
+                    self.diagnosis.finish(aid, {"status": "filed" if filed.get("ok") else "not_started"})
+            notice = m.creator_notice(now)
+            if notice and self.evolve_creator:
+                self.output_queue.append({"type": "proactive", "target": {"type": "private", "id": str(self.evolve_creator)},
+                                          "content": notice})
+            for r in m.replies_for_her(now):
+                text = m.describe(r)
+                self.episodes.add(text, kind="evolution", user_id="self", valence=0.3 if r["status"] in ("accepted", "done") else 0.0,
+                                  arousal=0.3)
+                if r["status"] in ("accepted", "done"):
+                    self._feel(EmotionState(joy=0.15), f"维护者答应了我提的事：{r['title']}")
+                elif r["status"] == "declined":
+                    self._feel(EmotionState(sorrow=0.05), f"维护者没有答应：{r['title']}")
+                m.mark_told(r["id"], now)
+        except Exception as e:
+            logger.error(f"[Maintainer] tick failed: {e}")
 
     def _maybe_improve_self(self, now: float):
         """Diagnose, propose, let fitness judge, and later check on real life whether it helped."""

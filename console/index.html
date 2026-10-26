@@ -317,6 +317,11 @@
       </form>
       <ul class="list" id="proposals" style="margin-top:10px;max-height:640px"></ul>
     </section>
+    <section>
+      <h2>她给维护者的请求</h2>
+      <div class="muted" style="margin-bottom:8px">她自己做不到的事会写在这里；维护智能体（DSH）读到后会告诉你，你在 DSH 里决定。这里也可以直接回复，她下次醒着时会知道。</div>
+      <ul class="list" id="asks" style="max-height:420px"></ul>
+    </section>
   </div>
 </main>
 
@@ -974,6 +979,33 @@ loaders.improve = async () => {
     }
     return li;
   }), "还没有提案");
+  await loaders.asks();
+};
+const ASK_STATUS = { open: "新的", seen: "已看", need_info: "想多问", accepted: "答应了", done: "做好了", declined: "不做" };
+loaders.asks = async () => {
+  const r = await api("maintainer");
+  fill("asks", (r.requests || []).map((q) => {
+    const li = el("li", {},
+      el("span", { class: "chip" }, ASK_STATUS[q.status] || q.status),
+      el("span", { class: "tag" }, `${q.id} · ${q.kind || ""} · ${q.requester_name || q.requester || ""}`),
+      el("div", {}, cut(q.title, 120)),
+      q.body ? el("div", { class: "muted" }, cut(q.body, 300)) : null,
+      q.response ? el("div", { class: "muted" }, "回复：" + q.response) : null,
+      el("div", { class: "when" }, ago(q.created)));
+    if (q.status !== "done" && q.status !== "declined") {
+      for (const [status, label] of [["seen", "已看"], ["accepted", "答应"], ["declined", "不做"], ["done", "做好了"]]) {
+        const b = el("button", { type: "button", style: "margin:6px 6px 0 0" }, label);
+        b.addEventListener("click", async () => {
+          const note = prompt(`回复她（${label}）：写一两句她听得懂的话，可以留空`, "") ;
+          if (note === null) return;
+          try { await api("maintainer", { id: q.id, status, note }); loaders.asks(); }
+          catch (err) { alert("失败：" + err.message); }
+        });
+        li.append(b);
+      }
+    }
+    return li;
+  }), "她还没有向维护者提过请求");
 };
 $("evolve-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();

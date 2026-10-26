@@ -346,6 +346,14 @@ async def _evolve(gw, ctx: ToolContext, args):   # starts a background task: run
         return "已经交给改造通道（后台在副本里跑，几分钟后出结果，还要创造者批准才会生效）。"
     return "改造通道现在用不了。"
 
+def _ask_maintainer(gw, ctx: ToolContext, args):
+    who = ctx.nickname or ctx.user_id
+    res = gw.maintainer.file("self", f"乃爱（和 {who} 聊天时）", str(args.get("title") or ""), str(args.get("detail") or ""),
+                             str(args.get("kind") or "wish"))
+    if res["ok"]:
+        return f"已经记下了（{res['id']}），维护者会看到，也会告诉创造者；有结果了我会知道。不用现在就等。"
+    return res["note"]
+
 def _qq_ready(gw, ctx):
     q = getattr(gw, "qq", None)
     return q is not None and q.connected()
@@ -383,6 +391,11 @@ TOOLS: List[Tool] = [
     Tool("evolve", "请改造通道修改我自己的代码（只有创造者能让我这样做；提案要创造者批准才会生效）。",
          _props(["task"], task=_s("想改什么、为什么、怎么验证")), _evolve,
          lambda gw, ctx: ctx.allow_evolve and getattr(gw, "evolve_agent", None) is not None),
+    Tool("ask_maintainer", "我自己做不到、需要有人改我的程序或给我添本事的事，写成请求交给维护者（会转告创造者，批准了才会做）。"
+         "不是每句话都要用：只有真的缺一个工具、一直出同一个错、或者很想要某个能力时才提，一天最多几次。",
+         _props(["title"], title=_s("一句话说清想请维护者做什么"), detail=_s("为什么需要、遇到了什么、期望变成什么样"),
+                kind=_s("wish 想要的能力 / bug 出错了 / tool 缺工具 / idea 想法")), _ask_maintainer,
+         lambda gw, ctx: getattr(gw, "maintainer", None) is not None),
 ]
 
 # The old text protocol and some names models like to use
@@ -390,7 +403,7 @@ ALIASES = {"recall": "recall", "memorize": "remember", "remember": "remember", "
            "web_search": "web_search", "who_is": "who_is", "read": "read_webpage", "read_webpage": "read_webpage", "open_url": "read_webpage",
            "fetch": "read_webpage", "schedule": "schedule_task", "schedule_task": "schedule_task", "remind": "schedule_task",
            "list_tasks": "list_tasks", "cancel_task": "cancel_task", "group_history": "group_history",
-           "member_info": "member_info", "evolve": "evolve"}
+           "member_info": "member_info", "evolve": "evolve", "ask_maintainer": "ask_maintainer"}
 
 _ACTION = re.compile(r"Action\s*[:：]\s*([A-Za-z_]+)[ \t]*(.*)")
 _KV = re.compile(r"""([A-Za-z_]+)\s*[=＝:：]\s*(?:"([^"]*)"|'([^']*)'|“([^”]*)”|「([^」]*)」|([^\s,，]+))""")

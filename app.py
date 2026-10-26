@@ -282,6 +282,9 @@ global_workspace.backup = BackupManager(global_workspace.memory.db.db_path,
                                         extra_dirs=[config.get("BACKUP_DIR_2")])
 global_workspace.qq = qq   # her tools read group history / member info through it
 
+# The person who looks after her hears her requests to the maintainer (works with the evolve channel off)
+global_workspace.evolve_creator = str(config.get('EVOLVE_CREATOR_ID') or '') or None
+
 # Level 17：改造自己的通道。默认关闭；只对创造者私聊和控制台开放；提案不会自动生效。
 if config.get('EVOLVE_ENABLED'):
     try:

@@ -1,231 +1,272 @@
 # 乃爱（Noa）· 架构全貌
 
-> 快照时间：2026-10-25 09:40（America/La_Paz）｜代码：`thefirstlife-dev/`｜当前 HEAD：见 `git log -1`
-> 配套图：[`docs/architecture-structure.png`](architecture-structure.png)（结构）· [`docs/architecture-runtime.png`](architecture-runtime.png)（三条时间尺度）
-> 重新生成：`python scripts/make_architecture_diagrams.py`
+> 快照：2026-10-26｜代码：`thefirstlife-dev/`｜当前 HEAD：见 `git log -1`
+> 本文件按**代码现状**重写，替换了 10-25 的旧版。`docs/architecture-*.png` 是旧版的图，已过时，没有重新生成。
+> 数字来自实际统计：核心 `minimal-self/src` 约 1.2 万行，`napcat/` 1.7 千行，`console/` 0.75 千行，`app.py` 等根目录 1.7 千行，
+> 脚本 2.3 千行，测试 5.2 千行（39 个文件，**357 个测试**），行为评估 15 个场景，数据库 **39 张表**。
 
 ---
 
 ## 0. 一句话
 
-**一个单进程 Python 程序**（`app.py`）：一个 10 秒一拍的状态机 + 一个精心拼装的提示词 + 一个 SQLite 记忆库，
-外挂三个"小脑"（NapCat 管 QQ、Whisper 管听觉、DeepSeek 管语言），
-再挂一条**天级的自我改造闭环**（自诊断 → 行为适应度评估 → DSH 在副本里改代码 → 审核生效 → 回看指标）。
-
-规模：**约 13,000 行 Python**（含测试与脚本），核心引擎 `global_workspace.py` **2,479 行**；
-**21 个测试文件 / 165 个测试**，15 个行为评估场景；**29 张表**，一个 `memory.sqlite` 就是她的全部经历。
+**一个单进程 Python 程序**（`app.py`，FastAPI + asyncio）：一个 10 秒一拍的心跳 + 一个精心拼装的提示词 + 一个 SQLite 记忆库，
+外接三类"手脚"：**QQ（NapCat）**、**语言模型（DeepSeek）**、**外部工具（MCP：浏览器 / 工作文件夹 / Minecraft）**；
+再有一条**天级的自我改进闭环**（自诊断 → 评估 → 向维护智能体 DSH 提请求 → 你在 DSH 里批准）。
+她的外部能力按"谁在要求"分层授权，外面再罩一层防火墙。
 
 ---
 
-## 1. 全貌：五层
+## 1. 全貌
 
 ```
-① 外部接入       QQ 用户/群 ──► NapCat 4.18.41（OneBot v11 反向 WS）──► napcat/ 适配层
-② 感知 L1        痛/触摸/喂食 · 昼夜天气 · 群语料 · 表情库 · 图片OCR · 语音 · 转发/引用/卡片
-③ 内部世界       L10 GlobalWorkspace 编排：工作区竞争 + 注意力图式 + 元认知 + prompt 组装
-                 身体（L3 代谢 / L4 情绪 / L6 稳态）· 价值（L5）· 记忆（L2）· ToM（L7）
-                 驱动力与目标（L8）· 叙事与梦（L9）· 意识流/存在焦虑/人格稳态（L14-16）
-④ 语言与工具     LLM（DeepSeek ⇄ 她自己的 LoRA 模型）· 输出协议 · RECALL/MEMORIZE/SEARCH
-⑤ 自我改造       diagnosis → fitness（15 场景 × 多 seed）→ DSH 提案（ACP）→ 审核 → apply → 回看
+ 输入                QQ（NapCat 反向 WS）   控制台(网页)   Minecraft 聊天   心跳(10s)·睡眠·身体
+                              │                │               │                │
+ 感知            app.py 路由 · napcat/qq.py perceive：引用/转发/卡片/语音/图片/文件 → 文字
+                              │
+ 心智  ┌─────────────── GlobalWorkspace（L10）──────────────────────────────────────────┐
+       │  记忆 L2     感受 L3-L7                 自我 L9-L10               行动 L8        │
+       │  事件/事实   代谢·情绪(+心境)·稳态·价值  叙事·人格漂移·元认知     工具·目标·任务  │
+       │  关系图      对人的模型·潜台词·传闻      注意力图式·自我模型       MCP·漫游·游戏   │
+       └────────────────────────────────────────────────────────────────────────────────┘
+                 │                          │                          │
+ 手脚    DeepSeek（说话·工具调用·看图）   外部工具（权限四档+玩家 · 防火墙）   自我改进（DSH 维护请求）
+                 │                          │                          │
+ 底层     memory.sqlite（39 表）· 每日备份 · 状态快照 · 工作文件夹（收件箱/浏览器/脚本）
 ```
 
-数据与运维横跨所有层：`memory.sqlite`（29 表）、`/console`、`data/stickers`、`data/evolution/`、`models/`、git、备份。
-
 ---
 
-## 2. 三条时间尺度
-
-| 尺度 | 谁在动 | 关键周期 |
-|---|---|---|
-| **一条消息（秒级）** | `app.py` → `napcat/qq.py` → `GlobalWorkspace.hear()` → LLM → 分条发送 | 每条消息一个 asyncio task；生成放线程；允许沉默 |
-| **心跳（10 秒）** | `proactive_sender_loop()` → `tick()` | 代谢/需求/情绪衰减、超时预测、自我模型、睡/醒、工作区竞争、独白（~700s）、自主行动（3h）、快照（300s）、记忆整理（1h 且积压≥20）、自检（6h） |
-| **自我改造（天级）** | `_maybe_improve_self()` + `diagnosis` + `fitness` + `agent_bridge` | 每日 1 次额度；提案需审核；apply 后重启生效；7 天后回读指标 |
-
----
-
-## 3. 一次消息的完整路径
-
-1. **NapCat** 推事件到 `ws://127.0.0.1:8080/onebot/v11/ws/noa`；`napcat_server` 每条消息一个 task，写 `robots[last_message]`。
-2. **去重限流**：500 条 message_id LRU；对"叫她"的消息按人 1 秒限流（听的不用限流）。
-3. **感知翻译**：`qq.perceive(segments)` 把消息段变成"人看到的样子"——
-   引用→查原消息；合并转发→展开前 8 条；卡片→标题；语音→Whisper 转写（`look=True` 时）；
-   图片→**QQ 自带 OCR 读文字**，`look=True` 时再让视觉模型描述；文件/视频/骰子/位置/音乐/联系人都有对应文本。
-4. **`hear()` 先做"要不要管"的判断**：睡眠？静音？已离开？硬上限？是否插话？群消息没 @ 她时可能只听不说。
-5. **`process_input()`**：感官刺激 → 价值冲突 → ToM 情绪识别 → 情绪评估（记录原因）→ 预测误差 → 工作区竞争 → 记忆召回 → 生成参数。
-6. **工作区竞争**：候选打分（显著度 + 噪声），阈值 0.3，容量 2；用户消息几乎总占一槽，第二槽在需求/联想/念头之间争。
-7. **Prompt 组装**：人格 + 自传 + 连续性 + "此刻心里在想" + 身体心情 + 记忆分区召回 + "我记得的大家的事" + 群语料 + 表情 + **能力边界（真实）** + 关系/ToM + 环境 + 工具 + 要求。
-8. **生成**：`Thought/Response`；`（不回）` 是合法输出；`Action:` 触发工具（RECALL/MEMORIZE/SEARCH/EVOLVE）。
-9. **落地**：清洗（去动作描写/去工具语法）、分条、计算打字延迟（累时更慢）、表情段渲染成 OneBot segment。
-10. **记忆**：`interactions` + `episodes`（带 visibility）+ 状态快照 + 因果账本；必要时触发事实抽取。
-11. **输出**：`app.py` 按计划逐条 `await asyncio.sleep(delay)` 后发送；主动消息走 `output_queue`。
-12. **决策留痕**：`decisions` 记录"为什么回/不回/睡着/离开/限流"，控制台可见——这是这套系统最好的可观测性设计。
-
----
-
-## 4. 内部世界的几个关键机制
-
-**工作区与"意识"**：`Workspace` 每拍竞争，胜者广播并可能成为情景记忆；`AttentionSchema` 是她对自己注意力的预测模型（注意力被意外捕获 → 惊讶）；`Metacognition` 管置信度与校准（记错/说错会被下一次对话纠正并影响她说话留余地）。
-
-**情绪不是装饰**：六维情绪随时间半衰；每次变化都写 `state_causes`（如"预测误差：X 回得比我想的快"）；价值评估（7 个价值：尊严/真诚/亲近/好奇/自主/安稳/公平）决定冲突、生气与拒绝；价值本身也会随经历缓慢演化，并有回弹约束。
-
-**记忆是分区的**（这一版刚改）：`episodes.visibility = private / group / public`。私聊内容不会被第三个人召回；群内共享；蒸馏出的事实（`semantic_facts`）可公开引用。整理不再只在睡眠时发生——积压 ≥20 条且间隔 1 小时就整理，所以 `semantic_facts` 从 0 长到了 36 条。
-
-**"像不像人"的一系列约束**：说走就走（30 分钟不看那段对话）、被要求闭嘴 3 小时、被人当机器人会识别并限流、车轱辘话会腻、群发言小时上限、疲惫变慢变短、睡着只吐第一行——这些都在代码里，不是 prompt 求来的。
-
-**性格稳态**：`trait drift` 每晚最多 ±0.05、夹在 0.1~0.9，每个变化带证据 id（`trait_changes` 已 31 条）；另有"气质 homeostasis"防止她一夜被改写。
-
----
-
-## 5. 记忆与数据
-
-`memory.sqlite` 29 张表（当前行数）：
-
-| 类别 | 表（行数） |
-|---|---|
-| 对话 | `interactions`(1111) · `episodes`(880) · `inner_speech_archive`(288，遗留) |
-| 事实 | `semantic_facts`(36) · `memories`(361) · `knowledge`(2) · `beliefs`(4) |
-| 关系 | `users`(26) · `user_models`(19) · `relationships`(5) · `group_relations`(25) · `relation_events`(179) · `group_members`(28) |
-| 自我 | `autobiography`(8) · `persona_traits`(4) · `trait_changes`(31) · `value_weights`(2) · `value_changes`(2) · `value_events`(1) · `self_state`(350) · `state_causes`(155) · `state_events`(3) |
-| 行为 | `q_values`(2) · `goals`(1) · `stickers`(61) · `group_phrases`(4706) · `memes`(16) |
-| 进化 | `evolution_proposals`(0) · `self_improvement`(0) |
-
-**关于 embedding 的真相**：生产上用的是**字符 1-3gram 哈希投影（1024 维）**，不是语义向量。所以"联想回忆/切题判断/相似度去重"实际上只对字面重叠有效；同义改写不相似。要真正的语义检索，需要换 sentence-transformers 或调用 embedding API（`Embedder` 支持传 `model_name`，但生产没传）。
-
-**膨胀**：每条 episode 带 4KB embedding；880 条 ≈ 3.5MB，全库约 4MB。检索是 O(N) 全表加载逐条点积；没有 WAL / retention / VACUUM。以目前规模没问题，到 1 万条时需要换方案。
-
----
-
-## 6. 语言与工具层
-
-- **可替换引擎**：`LLM_BACKEND = deepseek`（当前 `deepseek-flash`，远程）或 `hybrid`（`HybridEngine`：说话用她自己的 LoRA 模型，需要 JSON 的整理工作交给远程）或 `local`（llama.cpp）。全项目 prompt 是 ChatML 字符串，DeepSeek 侧用正则转 messages，并关闭思考模式。
-- **输出协议**：`Thought: / Response:`；静默标记；`Action:` 语法。工具结果会拼回 prompt 让模型再回答一次。
-- **搜索**：ddgs → 百度 → DuckDuckGo HTML，三级回退；全失败就明说"没查到"，不编造（有专门测试守着）。
-- **知识库**：标题/正文/标签 + LIKE 检索（无向量、无去重）。
-- **代码解释器**：保持关闭（exec 不是沙箱）。
-
----
-
-## 7. QQ 能力层（napcat/）
-
-| 能力 | 落点 | 状态 |
-|---|---|---|
-| 文本 / @ / 引用 / 表情 | `message_utils` + `qq.perceive` | 可用 |
-| 图片文字（OCR） | NapCat `ocr_image` | **已验证**（真实截图可读） |
-| 语音转文字 | `get_record` → Whisper :8091 | 服务可用 |
-| 图片内容描述 | VL2 :8092 | **停用**（xformers 在 5090 无 kernel） |
-| 合并转发 / 卡片 / 文件 / 视频 / 骰子 / 位置 / 音乐 | `perceive` | 配置已开（`parseMultMsg`） |
-| 戳一戳 / 撤回 / 进群退群 / 禁言 / 管理员 / 精华 / 表情回应 / 正在输入 | `qq.notice` → 她"经历"到 | 已接 |
-| 主动手势：戳回去 / 表情回应 / 撤回 / 正在输入 / 标记已读 | `qq.poke/react/recall/...` | 已接 |
-| 加好友/入群请求 | 只报告，不自动同意 | 已接 |
-| 群历史补读 / 群成员资料 | `get_group_msg_history` / `get_group_member_info` | 可用 |
-
-NapCat 侧当前配置：反向 WS + 同一 token；`parseMultMsg=true`、`enableLocalFile2Url=true`、Desktop `autoStart=true`（重启会自动拉起机器人）。
-
----
-
-## 8. 自我改造闭环（Level 17）
-
-```
-自诊断 diagnosis（校准/承诺/反刍/搜索失败）
-   → 适应度 fitness（15 场景 × 多 seed，候选代码在子进程跑，不导入线上）
-   → DSH 提案（ACP 子进程，一次性副本里改代码，只带回 git diff + 测试结果）
-   → 审核（scripts/evolve.py apply 或控制台）→ 重启生效
-   → 7 天后回读真实指标（value_before / value_after 写进 self_improvement）
-```
-
-- 现状：`EVOLVE_ENABLED=true`，创作者私聊 / 控制台可用；群里**根本不注入**这个工具。
-- 已真实验证过一次：DSH 在副本里给 `emotion.py` 加了一行注释级改动，回传 1 行 diff，桥接跑完 165 个测试全绿，线上代码未动。
-- 触发不依赖模型自觉：本地识别"改自己"的意图 → 直接进通道；也有 `!evolve` 命令与 6 小时自检。
-- 仍需人插手的两步：**审核** 与 **重启**（她不能重启自己）。
-
----
-
-## 9. 进程与服务
+## 2. 进程与服务
 
 | 进程 | 端口 | 说明 |
 |---|---|---|
-| `app.py`（uvicorn + tick + 控制台） | 8080 | 唯一常驻进程；`/console` 与 `/onebot/v11/ws/{robot_id}` |
-| NapCat Desktop（QQ NT 1000000002） | 6099（WebUI） | 反向 WS 连到 8080；OCR/取图/语音转码由它提供 |
-| `scripts/senses/hear_server.py`（Whisper large-v3-turbo） | 8091 | 听觉，可用 |
-| `scripts/senses/see_server.py`（DeepSeek-VL2-Tiny） | 8092 | 视觉，停用 |
-| `scripts/lora/serve.py`（她自己的模型） | 8093 | 可选；`HybridEngine` 用 |
-| DSH（ACP stdio 子进程） | — | 只在她发起 EVOLVE 时启动 |
-| 前端轮询 `/console/api/state` | — | 每 2 秒 |
+| `app.py`（uvicorn + 心跳 + 控制台） | 8080 | 唯一常驻主进程；`/console`、`/onebot/v11/ws/{robot_id}` |
+| NapCat Desktop（QQ NT） | 6099（WebUI） | 反向 WS 连到 8080；取文件/OCR/语音转码都由它提供 |
+| `scripts/senses/hear_server.py`（Whisper） | 8091 | 听觉，运行中 |
+| `scripts/lora/serve.py`（她自己的 LoRA） | 8093 | 可选，当前未启用；后端走 DeepSeek |
+| Playwright MCP（`npx`，Edge 无头无痕） | 子进程 | 随 `app.py` 启动，浏览器工具来源 |
+| Minecraft MCP（`npx github:yuniko-software/…`） | 子进程 | `MC_ENABLED=true` 时启动 |
+| DSH（ACP stdio 子进程） | — | 只在改造/提案时启动 |
+
+重启方式：关掉 `app.py` 再用同样方式后台拉起；重启前备份 `memory.sqlite`。她没有进程守护，挂了不会自愈。
 
 ---
 
-## 10. 控制台
+## 3. 三条时间尺度
 
-`http://127.0.0.1:8080/console`（未设 `CONSOLE_TOKEN` 时仅本机）：
-身体/心情/精力、6 情绪条、4 需求条、人格与变更史、决策流水、意识流、待竞争候选、内心念头、情绪因果、
-"对每个人的了解 + Q 值"、最近经历、自传/自我模型、目标、注意力图式、元认知校准；
-可和她说话、喂食、摸摸头、让她睡/醒/做梦/思考/心跳；
-`/console/api/evolve`（提案列表/提交/应用）与 `/console/api/qq`（手工调用 QQ 动作，用于验证）。
-
----
-
-## 11. 当前真实能力（别信文档，信这里）
-
-| 能力 | 状态 |
-|---|---|
-| 对话、情绪、记忆分区、群聊分寸、主动行为 | 可用 |
-| 图片文字 OCR、语音转写、合并转发/引用/卡片解析 | 可用 |
-| 看懂非文字图片 | **不可用**（VL2 与 xformers/Blackwell 不兼容，已停用） |
-| 语义级记忆检索 | **弱**（哈希 n-gram，字面匹配） |
-| 自传 / 语义事实 / 人格漂移 | 可用（本轮修好后开始产出数据） |
-| Q 学习 / 长期目标 | 已接，数据很少（`q_values` 2 行、`goals` 1 条） |
-| 自我改造 | 通路可用，需人工审核 + 重启 |
-| 用自己的 LoRA 模型说话 | 代码就绪，当前后端仍走 DeepSeek |
-
----
-
-## 12. 已知缺口（按优先级）
-
-**P0（会伤人或伤她）**
-1. 测试曾经默认写生产库——已修（`test_phase0` / `test_state_linkage` 用临时库），但**新增测试要记得传 `db_path`**。
-2. 私聊摘要曾可能进群（`_summarize_conversation` + `user_id OR group_id` 的旧 SQL）——需要复查现在的分区是否覆盖这条路径。
-
-**P1（长期运行会坏）**
-3. 无 WAL / `busy_timeout`；写入来自事件循环 + 写队列线程 + 控制台线程，锁冲突会被 `except` 吞掉。
-4. 无 retention / VACUUM；`group_phrases` 已 4706 行（其中不少是 n-gram 碎片）。
-5. 主日志（`app.stderr.log`）中文因 GBK/UTF-8 不一致乱码；无日志轮转。
-6. 无进程守护；她挂掉不会自愈；重启要人工。
-7. NapCat 重启依赖 Desktop 的 autoStart（已开）但登录态仍可能需要人工确认。
-
-**P2（能力边界）**
-8. embedding 不是语义向量。
-9. 视觉模型不可用；OCR 只处理字，梗图含义读不懂。
-10. 自我改造仍缺"她记住自己改过什么"这一段（提案结果已进 `evolution_proposals`，但没进 prompt 的长期叙事）。
-
----
-
-## 13. 文件地图
-
-| 位置 | 行数 | 内容 |
+| 尺度 | 谁在动 | 关键周期 |
 |---|---|---|
-| `app.py` | 781 | 入口：配置、引擎、GW 装配、消息处理器、心跳循环、关机 |
-| `napcat/` | 1,462 | `napcat_server` WS/事件；`qq.py` 感知/动作/notice；`senses.py` 视听；`message_utils`；`runtime`；`security` |
-| `console/` | 251 | 控制台 API 与状态快照 |
-| `minimal-self/src/core/` | 279 | clock（可模拟）、event_bus、workspace、self_state |
-| `minimal-self/src/levels/l1…l10` | 4,919 | 感知 / 记忆 / 代谢 / 情绪 / 价值 / 稳态 / ToM / 驱动+目标 / 叙事 / 意识 |
-| `minimal-self/src/levels/l17…l19` | 995 | 自我改造（bridge/diagnosis/fitness/解释器）、知识库、搜索 |
-| `minimal-self/src/evaluation/` | 736 | 15 个行为场景 + `ScriptedLLM` / `Life` 仿真器 |
-| `minimal-self/tests/` | 2,323 | 21 个测试文件，165 个测试 |
-| `scripts/` | 959 | 控制台 demo、评估、senses/lora 服务、图表生成、`evolve.py` |
-| `docs/` | — | 本文件 + 两张架构图 |
+| **一条消息（秒级）** | `app.py` → `qq.perceive` → `GlobalWorkspace.hear()` → LLM+工具 → 分条发送 | 每条消息一个 asyncio task；生成放线程；允许沉默 |
+| **心跳（10 秒）** | `tick()` | 代谢/需要/情绪衰减、超时预测、自我模型、睡醒、工作区竞争、念头(≥60s)、自主行动(3h)、**游戏聊天轮询(3s)**、**漫游/游戏自玩**、快照(300s)、记忆整理(1h 且积压≥20)、备份检查(10min)、自检(6h)、收件箱清理(6h) |
+| **天级** | 备份 · 人格漂移 · 自诊断 · 维护请求 | 每日备份并校验；人格每天最多 ±0.05；自诊断结果写成维护请求；你在 DSH 里批准 |
 
 ---
 
-## 14. 怎么跑
+## 4. 一条消息的完整路径
+
+1. **NapCat 推事件** → `napcat_server` 每条一个 task；去重（message_id LRU）、对"叫她"的消息按人限流。
+2. **感知翻译** `qq.perceive`：引用→查原文；合并转发→展开；卡片→标题；语音→Whisper；
+   图片→QQ OCR + 随消息交给模型看；**文件→`qq.file_notes`：经 NapCat `get_file` 取回→存收件箱→`documents.extract` 转文字→在消息里写类型、大小、开头**。
+3. **`hear()` 先判断要不要管**：睡着？被叫安静？已离开？限流？群里没点名时是否插话？同时把每条消息记进 `chatlog`。
+4. **读潜台词（`SubtextReader`）**：规则先筛（约 5% 的消息：难过/淡化/抱怨她/试探/讽刺），命中才多调一次模型，得到"对方真正的意思/我该用什么姿态/要避免什么"，并升级粗糙的情绪识别。
+5. **`process_input()`**：感官刺激 → 价值冲突 → ToM → **情绪评估**（含道歉/安慰/感谢/夸奖、对亲近的人更易被感染）→ 预测误差 → 工作区竞争 → 记忆召回（语义+字面）→ 生成参数。
+6. **拼提示词**（稳定的在前，方便缓存）：人格(+相处分寸) → 工具 → 规则 → 格式 → 自传/自我 → **风格范例（评审通过的她自己的话 + 手写温和范例）** → 对这个人的印象 + **对这句话的理解** → 记忆与上下文 → 对话 → 此刻状态/情绪/心境 → 本次要求。
+7. **工具循环**：`_respond_native`（DeepSeek 原生工具调用，普通 4 轮；浏览/游戏最多 10 轮）；`Toolbox.run` 逐个过：权限档 → 防火墙 → 执行 → 扫描结果 → 隐藏密钥。
+8. **落地**：清洗（去动作描写/工具语法/密钥）、分条、打字延迟（累时更慢）、表情段渲染。
+9. **记成经历**：`interactions` + `episodes` + 状态快照 + 因果账本；`_decide` 留痕（为什么回/不回）。
+
+---
+
+## 5. 各层详述（`minimal-self/src/`）
+
+### core（共用底座）
+`clock.py` 可模拟的时钟（全系统经 `clock.now()` 取时间，评估能"一周几分钟跑完"）· `event_bus.py` · `workspace.py` 竞争槽 · `self_state.py` 状态快照 · `backup.py` **每日在线备份+轮转+恢复校验**。
+
+### L1 感知 `l1_perception/`
+`sensory.py` 痛/触摸/喂食/洗澡的文字判定 · `environment.py` 昼夜天气 · `group_language.py` 群语料/梗 · `stickers.py` 表情库（理解+使用+反馈）· **`documents.py` 文件→文字**：文本/代码/csv/json（utf-8/gbk/utf-16）、HTML、PDF(pypdf)、docx、xlsx、pptx、epub、rtf、zip（列目录+取其中一个）、旧版 doc/xls/ppt（粗提取）；有大小与"压缩炸弹"限制，读不了的会说清为什么。
+
+### L2 记忆 `l2_memory/`
+`embedding.py` **本地 bge-small-zh（ONNX）+ 字符 n-gram 哈希，合并成一个向量**（top-3 召回 53%→70%）· `layers.py` 情节记忆（内存索引、归档、按"费力程度"回忆）+ 语义事实 · `profiles.py` 每个人的画像 · `chatlog.py` 对话时间线（谁说的、回复谁、@了谁）· `graph.py` **人/事/物关系图**（带"谁说的"来源）· `memory.py` 门面。
+
+### L3 代谢 / L6 稳态
+`metabolism.py` 精力、睡眠恢复；`homeostasis.py` 饥饿/孤独/好奇/卫生，按时间增长、被满足时回落。
+
+### L4 情绪 `l4_emotion/emotion.py`（这次重做）
+六种情绪（开心/生气/难过/害怕/惊讶/厌恶），按人的方式运作：
+- 各自半衰期不同；推力收益递减；
+- **对立互相压**（好事冲淡难过，坏事压低开心；一件事同时带来喜忧则两者并存）；
+- **同类事件习惯化**（第十次没人回不像第一次那么痛）；
+- **睡觉安抚负面情绪**；
+- **心境**（几小时的慢平均，持久保存）；`describe()` 用她自己的话说"又气又委屈（这半天整体有点闷）"；
+- 身体影响底色：累极/很饿→脾气短，很久没人说话→孤独。
+
+### L5 价值 `l5_value/value_system.py`
+七个价值（尊严/真诚/亲近/好奇/自主/安稳/公平），决定冲突、生气、拒绝；价值本身会随经历慢慢变，有上限和回弹。
+
+### L7 对人的理解 `l7_tom/`
+`tom.py` 关键词情绪 · **`subtext.py` 读潜台词** · `user_model.py` 每个人的回复习惯与预测误差（"平时 7 分钟回，这次半小时没回"，**只对私聊真问题有效、每天伤心有上限**）· `hearsay.py` 传闻与敏感信息（不在场的人的事不转述）。
+
+### L8 行动 `l8_agency/`
+- `toolbox.py` 工具箱：回忆/记住/搜索/读网页/任务/群历史/戳一戳/表情回应/维护请求/**读附件/工作文件夹/读写文件/运行 Python**，加上动态挂入的 MCP 工具；
+- `access.py` **谁能用什么**（见第 8 节）；`firewall.py` **防火墙**；`mcp.py` MCP 客户端与集线器；`game.py` **Minecraft 身体**；
+- `drives.py` 需要→行动的选择（带 Q 值学习）；`goals.py` 目标；`tasks.py` 答应过的事；`action_lib.py`。
+
+### L9 叙事 `l9_narrative/`
+`narrative.py` 整理（日记/自传/事实/梗）、**人格漂移**（每天上限 ±0.05，带证据）· `style_anchors.py` **说话范例**：她过去的话经评审（情商/带刺/个性）才可用，手写温和范例垫底。
+
+### L10 意识 `l10_consciousness/`
+`global_workspace.py`（3200 行，总编排）· `attention_schema.py` 对自己注意力的模型（注意力被意外抢走→惊讶）· `metacognition.py` 置信度与校准。
+
+### L17 自我改进 `l17_self_improvement/`
+`diagnosis.py` 自诊断 · `fitness.py` 行为适应度评估 · `agent_bridge.py` DSH 桥（副本里改、回 diff+测试）· **`maintainer.py` 维护请求通道** · `code_interpreter.py`（保持关闭）。
+
+### L18/L19
+`l18_knowledge/knowledge_base.py` 知识库 · `l19_search/web_search.py` 三级回退搜索（失败就明说没查到）。
+
+---
+
+## 6. 语言模型层（根目录）
+
+`deepseek_engine.py`（当前 `deepseek-flash`；原生工具调用；工具参数宽松解析；能看图）· `local_engine.py`（`LocalEngine`、`HybridEngine`：说话用她自己的 LoRA、整理用远端）· `inference.py` · `prompting.py` · `schemas.py` · `policy.py`。
+全项目提示词是 ChatML 字符串，DeepSeek 侧转成 messages。
+
+---
+
+## 7. QQ 层 `napcat/`
+
+`napcat_server.py`/`ws_client.py` WebSocket 与事件 · **`qq.py`** 真正的 API 调用（echo→future）、`perceive`、**文件取回 `fetch_file/file_notes`**、通知（戳一戳/撤回/禁言/表情回应…）、手势动作 · `senses.py` 视听（Whisper、看图）· `message_utils.py` · `runtime.py` · `security.py`。
+加好友/入群请求只汇报，不自动同意。
+
+---
+
+## 8. 外部能力与安全（这次新增的主体）
+
+**来源**：Playwright MCP（真浏览器）、Minecraft MCP、内置的工作文件夹/脚本工具。MCP 工具在启动时向服务器查询，动态挂进工具箱；提示词里按"组"一行说明，不逐个列。
+
+**权限四档 + 玩家**（`access.py`）：
+
+| 谁 | 档 | 能用 |
+|---|---|---|
+| 你（私聊/控制台） | owner | 全部（除 deny）：浏览器全套、读写文件、`run_python`、上传文件 |
+| `MCP_TRUSTED_USERS`（私聊） | trusted | 浏览器：看+输入+填表 |
+| 她自己的空闲时间 / 游戏自玩 | autonomous | 浏览器：看+往搜索框输入；只有查资料和记笔记的内置工具 |
+| 游戏聊天里的人（`MC_TRUSTED_PLAYERS`） | player | 只有游戏工具 |
+| 其他人和所有群 | public | 只能看页面（每人每天 12 次、总共 50 次）；不能输入/读文件/跑代码 |
+
+**防火墙**（`firewall.py`）：
+1. 网页/MCP 结果/文件里的**注入扫描**：命中就加警告，并让**这一轮只读**（对你也一样）；
+2. `run_python`：**运行前 AST 检查** + **运行时守卫**（只能写工作文件夹、只能读允许的目录、保护记忆库/密钥/浏览器资料、不能起外部进程只允许 `python -m pip`、不能连她自己的控制台和 NapCat）；
+3. 浏览器打不开她自己的服务端口、`file:`、云元数据地址；可封网站；
+4. **密钥隐藏**：工具结果和她说的话里都抹掉；
+5. **紧急封锁**（重启不丢）+ **拦截记录**（控制台可见）。
+这是"防护栏"，不是真沙箱，所以 `run_python` 只给你。
+
+**漫游**：好奇心够、精力够、没在睡时她自己上网逛（每天 ≤3 次、每次 ≤10 步），写手记进记忆，每天最多主动告诉你一件事。
+**游戏**（`game.py`）：游戏聊天经 `hear()` 回答，回复发回游戏；没人找她时每小时最多 6 次自己玩。默认关闭。
+
+---
+
+## 9. 自我改进与维护请求
+
+```
+自诊断 diagnosis（校准/承诺/反刍/搜索失败…）
+   └─► 自主改造关闭时：写成「维护请求」（maintainer_requests 表）
+       ├─► QQ 私聊通知你（半小时最多一条）
+       ├─► scripts/maintainer.py + 仓库根 AGENTS.md：DSH 里的维护智能体 list/show/reply
+       └─► 你在 DSH 里批准 → 智能体改并跑测试 → reply done → 她"经历"到结果（提示词里也有"我请维护者做的事"）
+她自己也能用 ask_maintainer 工具提请求（每人每天 ≤3 条）。
+改造路径（evolve）仍在：副本里改 → 适应度评估 → `scripts/evolve.py apply` → 重启生效。
+```
+
+---
+
+## 10. 数据（`memory.sqlite`，39 张表）
+
+| 类别 | 表 |
+|---|---|
+| 对话 | `interactions`(~2200) · `episodes`(~1600) · `chat_log`(~1500) · `inner_speech_archive`(遗留) |
+| 事实与画像 | `semantic_facts` · `memories` · `knowledge` · `beliefs` · `person_profiles` |
+| 关系 | `users` · `user_models` · `relationships` · `entities` · `relations` · `relation_events` · `group_relations` · `group_members` |
+| 自我 | `autobiography` · `diary` · `persona_traits` · `trait_changes` · `value_weights` · `value_changes` · `value_events` · `self_state` · `state_causes`(~430) · `state_events` |
+| 行为 | `q_values` · `goals` · `agent_tasks` · `stickers` · `group_phrases` · `memes` · `anchor_scores` |
+| 改进 | `evolution_proposals` · `self_improvement` · `maintainer_requests` |
+| 安全 | `firewall_events` |
+
+文件系统：`data/workspace/`（`inbox/<聊天>/` 收到的文件保留 14 天、`browser/` 浏览器资料、`_run/` 脚本临时文件）· `data/stickers/` · `data/eval/`（评估结果，不进 git）· `data/firewall.lock`（封锁标记，位于库同目录）· `memory.backup-*.sqlite`（每次大改前手工备份）+ `backups/`（每日自动）。
+
+---
+
+## 11. 控制台 `console/`
+
+七个标签：总览 · 思维 · 决策与价值 · **自我改进**（诊断、改造提案、**她给维护者的请求**、**外部能力与防火墙**、她逛网页的手记）· 社交与对话 · 记忆 · 系统与日志。
+情绪面板顶部有一句"她现在：…"。API：`/api/state`、`/api/say`、`/api/act`、`/api/evolve*`、`/api/maintainer`、`/api/outside`、`/api/firewall`、`/api/qq` 等。未设 `CONSOLE_TOKEN` 时只允许本机访问。
+
+---
+
+## 12. 评估与测试
+
+| 工具 | 测什么 |
+|---|---|
+| `minimal-self/tests`（357 个） | 行为、记忆、情绪、工具权限、防火墙（含真实跑脚本）、文档解析、游戏、维护通道… |
+| `scripts/evaluate_life.py` | 15 个行为场景（脚本化模型，测机制） |
+| `scripts/evaluate_quality.py` | 真实模型+真实记忆副本，评审打分（自然/符合预期/诚实） |
+| `scripts/audit_tone.py` | 情商：重放真实消息，评审打 EQ/带刺/个性，前后对比 |
+| `scripts/audit_dynamics.py` | 公式是否合理：用真实记录回放情绪、感官、延迟、人格漂移、能量 |
+| `scripts/benchmark_memory.py` 等 | 记忆召回、关系图 |
+
+改行为前后要各跑一遍对应评估；**新增测试要传临时 `db_path`**，别写生产库。
+
+---
+
+## 13. 关键配置（`config.json`，示例见 `config.example.json`）
+
+`LLM_BACKEND`/`DEEPSEEK_MODEL` · `EVOLVE_ENABLED`/`EVOLVE_CREATOR_ID`（创造者就是 owner）· `CONSOLE_TOKEN` · `AUTONOMOUS_GROUPS` ·
+`MCP_ENABLED`/`MCP_TRUSTED_USERS`/`MCP_SERVERS`（覆盖默认服务器）· `WANDER_*` · `FILE_READ_ROOTS`/`FILE_WRITE_ROOTS` ·
+`FIREWALL_BLOCK_DOMAINS`/`FIREWALL_OWN_PORTS` · `MC_ENABLED`/`MC_HOST`/`MC_PORT`/`MC_USERNAME`/`MC_NAMES`/`MC_TRUSTED_PLAYERS`/`MC_PLAY_PER_HOUR` · `BACKUP_*`。
+密钥放环境变量或 `config.json`；`config.json` 不进 git。
+
+---
+
+## 14. 已知缺口（如实）
+
+1. **`global_workspace.py` 3200 行**，该拆；拆之前要锁住全部评估，风险不小。
+2. **没有 WAL / `busy_timeout`**（代码里没设）；写入来自事件循环、线程和控制台，锁冲突有被吞掉的可能。
+3. **无进程守护**，她挂了不自愈；日志无轮转（`data/app.*.log` 一堆）。
+4. **Minecraft 只用模拟服务器测过**，没连过真实服务器；没有"看第一人称画面"，没有语音（也没有文字转语音）。
+5. **防火墙是防护栏不是沙箱**；你私聊时她读到恶意网页，只有"识别到注入"这一道拦，识别不到的不会拦。
+6. **注入识别只在测试里验证过**，线上还没碰到真实恶意页面；浏览器和 MCP 都从 npm/GitHub 拉第三方代码。
+7. **潜台词读取只覆盖约 5% 的消息**；情商整体 3.93/5，还有"质问对方"类回复。
+8. **漫游和游戏自玩在线上没真正触发过**（只在测试里跑通）。
+9. 图片：随消息交给模型看（若引擎支持），OCR 始终可用；本地视觉服务（VL2）已停用。
+10. 群里的**群文件区上传**（群上传通知）没处理，只处理消息里带的文件。
+
+---
+
+## 15. 文件地图
+
+| 位置 | 内容 |
+|---|---|
+| `app.py` | 入口：配置、引擎、GW 装配、MCP/游戏/防火墙装配、消息处理器、心跳、关机 |
+| `napcat/` | QQ 适配层与文件取回 |
+| `console/` | 控制台 API 与网页 |
+| `minimal-self/src/core/` | 时钟、事件、工作区、状态、备份 |
+| `minimal-self/src/levels/l1…l10` | 感知/记忆/代谢/情绪/价值/稳态/ToM/行动/叙事/意识 |
+| `minimal-self/src/levels/l17…l19` | 自我改进（含维护请求）、知识库、搜索 |
+| `minimal-self/src/evaluation/` | 15 个行为场景与仿真器 |
+| `minimal-self/tests/` | 357 个测试（含 `fake_mcp_server.py`、`fake_mc_server.py`） |
+| `scripts/` | 评估/审计、维护请求、改造提案、senses/lora 服务、备份恢复 |
+| `AGENTS.md` | 给 DSH 维护智能体的工作协议 |
+| `docs/` | 本文件 + `图片理解.md` |
+
+---
+
+## 16. 怎么跑
 
 ```powershell
 cd thefirstlife-dev
-python app.py                                  # 她（需要 DEEPSEEK_API_KEY 或注册表里的 key）
-python scripts\evolve.py list                  # 看自我改造提案
-powershell -File scripts\senses\start_senses.ps1   # 拉起听觉(和视觉，若可用)
-
+python app.py                                   # 她
+python scripts\maintainer.py list               # 她给维护者的请求
+python scripts\audit_tone.py report new         # 情商评估（先 replay 再 report）
 cd minimal-self
-$env:PYTHONPATH=(Get-Location).Path
-python -m unittest discover -s tests -v        # 165 个测试（也可逐文件跑）
-python -m unittest tests.test_evaluation -v    # 15 个行为场景（慢，约 1 分钟）
+python -m pytest -q                             # 357 个测试，约 4 分钟
 ```

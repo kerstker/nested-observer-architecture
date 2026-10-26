@@ -22,6 +22,40 @@ REACH = 4.5            # how far a survival player can break a block
 TRUNK_HEIGHT = 14      # a tall tree, not a skyscraper
 
 
+SEE_THROUGH = ("air", "grass", "fern", "flower", "torch", "snow", "sapling", "vine", "petals", "rail", "button",
+               "carpet", "leaf_litter", "bush", "pressure_plate", "tripwire", "glass")
+SOFT = ("leaves", "grass", "fern", "flower", "vine", "bush", "snow", "leaf_litter")    # a player just knocks these out of the way
+
+
+def sight_cells(eye: tuple, target: tuple) -> List[tuple]:
+    """The block cells the line from her eye to the middle of a block passes through (target excluded)."""
+    tx, ty, tz = target[0] + 0.5, target[1] + 0.5, target[2] + 0.5
+    dist = math.dist(eye, (tx, ty, tz))
+    n = max(2, int(dist / 0.15))
+    out: List[tuple] = []
+    for i in range(1, n):
+        f = i / n
+        c = (math.floor(eye[0] + (tx - eye[0]) * f), math.floor(eye[1] + (ty - eye[1]) * f),
+             math.floor(eye[2] + (tz - eye[2]) * f))
+        if c != tuple(target) and c not in out:
+            out.append(c)
+    return out
+
+
+def first_obstacle(rpc, eye: tuple, target: tuple) -> Optional[tuple]:
+    """The first block between her eye and the target that a crosshair would hit instead: (x, y, z, id) or None."""
+    cells = sight_cells(eye, target)
+    if not cells:
+        return None
+    got = (rpc("perception.blocks", {"positions": [{"x": c[0], "y": c[1], "z": c[2]} for c in cells]}) or {}).get("blocks") or []
+    for c, b in zip(cells, got):
+        block = str(b.get("id") or "")
+        name = block.split(":")[-1]
+        if block and not any(s in name for s in SEE_THROUGH):
+            return (c[0], c[1], c[2], block)
+    return None
+
+
 class Skills:
     def __init__(self, rpc: Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]], who: Callable[[str], Optional[Dict]] = None):
         self.rpc = rpc                      # method, params -> result dict or None
@@ -31,6 +65,7 @@ class Skills:
         self.last_result = ""
         self._stop = threading.Event()
         self.failed: Dict[tuple, float] = {}      # trees she could not get to lately: try another one
+        self.last_blocked: Optional[tuple] = None
         self._thread: Optional[threading.Thread] = None
 
     # --- running ------------------------------------------------------------------------
@@ -94,11 +129,53 @@ class Skills:
         got = (self.rpc("perception.blocks", {"positions": [{"x": x, "y": y, "z": z}]}) or {}).get("blocks") or [{}]
         return str(got[0].get("id") or "")
 
-    def _break(self, x: int, y: int, z: int, timeout: float = 8.0) -> bool:
+    def _smooth_look(self, x: float, y: float, z: float, seconds: float = 0.25) -> None:
+        """Turn the camera like a hand moves a mouse: a big turn takes longer than a small one, it speeds up and
+        slows down (ease in and out), and it is drawn in small steps (~50 a second), never a snap."""
+        st = self.rpc("player.getState", {}) or {}
+        yaw0 = float(st.get("yaw") or 0.0)
+        pitch0 = float(st.get("pitch") or 0.0)
+        ex = float(st.get("x") or 0.0)
+        ey = float(st.get("y") or 0.0) + 1.62
+        ez = float(st.get("z") or 0.0)
+        dx, dy, dz = x - ex, y - ey, z - ez
+        horiz = math.hypot(dx, dz) or 1e-6
+        target_yaw = math.degrees(math.atan2(dz, dx)) - 90.0
+        target_pitch = -math.degrees(math.atan2(dy, horiz))
+        delta = (target_yaw - yaw0 + 180.0) % 360.0 - 180.0
+        turn = max(abs(delta), abs(target_pitch - pitch0))
+        if turn < 1.5:
+            return
+        duration = max(seconds, min(0.9, 0.12 + turn / 300.0))     # ~300 degrees a second at most, like a wrist
+        steps = max(3, int(duration / 0.02))
+        start = time.time()
+        for i in range(1, steps + 1):
+            t = i / steps
+            ease = t * t * (3 - 2 * t)                                  # smoothstep: speed up, then settle
+            self.rpc("control.look", {"yaw": yaw0 + delta * ease,
+                                      "pitch": pitch0 + (target_pitch - pitch0) * ease})
+            wait = start + duration * t - time.time()
+            if wait > 0:
+                time.sleep(wait)
+
+    def _break(self, x: int, y: int, z: int, timeout: float = 8.0, depth: int = 0) -> bool:
+        """Mine a block the way a player does: only what she can see, looking at it the whole time."""
         before = self._block(x, y, z)
         if not before or before.endswith(":air"):
             return False
-        self.rpc("control.lookAt", {"x": x + 0.5, "y": y + 0.5, "z": z + 0.5})
+        me = self._me()
+        if me:
+            eye = (me["x"], me["y"] + 1.62, me["z"])
+            hit = first_obstacle(self.rpc, eye, (x, y, z))
+            if hit:
+                if depth == 0 and any(s in hit[3].split(":")[-1] for s in SOFT):
+                    self.progress = f"先把挡着的 {hit[3].split(':')[-1]} 打掉"
+                    self._break(hit[0], hit[1], hit[2], timeout=4.0, depth=1)
+                    hit = first_obstacle(self.rpc, eye, (x, y, z))
+                if hit:
+                    self.last_blocked = hit
+                    return False                # something solid in the way: no mining through it
+        self._smooth_look(x + 0.5, y + 0.5, z + 0.5, 0.3)
         if self.rpc("interact.breakBlock", {"x": x, "y": y, "z": z, "mode": "survival"}) is None:
             return False
         end = time.time() + timeout
@@ -106,6 +183,7 @@ class Skills:
             time.sleep(0.3)
             if self._block(x, y, z) != before:
                 return True
+            self._smooth_look(x + 0.5, y + 0.5, z + 0.5, 0.1)     # keep the eyes on it while the arm works
         self.rpc("interact.stopBreaking", {})
         return False
 
@@ -215,5 +293,5 @@ class Skills:
         self.progress = f"走去 {player} 身边"
         ok = self._walk_to(them["x"], them["y"], them["z"], reach=2.5)
         if ok:
-            self.rpc("control.lookAt", {"x": them["x"], "y": them["y"] + 1.6, "z": them["z"]})
+            self._smooth_look(them["x"], them["y"] + 1.6, them["z"], 0.3)
         return f"到 {player} 身边了。" if ok else f"没走到 {player} 那里。"

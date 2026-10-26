@@ -15,7 +15,10 @@ NAMES = (("get_self", "Get local player state"), ("get_recent_chat", "Get recent
          ("navigate_to", "Walk somewhere"), ("break_block", "Break a block"), ("screenshot", "Take a screenshot"),
          ("run_command", "Run a command"), ("give_item", "Give an item"), ("set_block", "Set a block"),
          ("supervised_command", "Supervised command"), ("get_screen", "Current screen"),
-         ("close_screen", "Close the open screen")) if FABRIC else (
+         ("close_screen", "Close the open screen"),
+         ("collect_blocks", "Gather a number of blocks"), ("travel_to", "Walk to a far coordinate"),
+         ("craft_item", "Craft an item"), ("plan_craft", "Plan a craft"), ("job_status", "Status of the job"),
+         ("job_cancel", "Stop the job")) if FABRIC else (
     ("get-position", "Get the current position of the bot"), ("read-chat", "Get recent chat messages from players"),
     ("send-chat", "Send a chat message in-game"), ("move-to-position", "Move the bot"), ("dig-block", "Dig a block"),
     ("find-entity", "Find the nearest entity"))
@@ -67,12 +70,20 @@ for line in sys.stdin:
         elif name == "get_screen":
             path = os.path.join(DIR, "screen.txt")
             screen = open(path, encoding="utf-8").read().strip() if os.path.exists(path) else "none"
-            reply(rid, text(json.dumps({"inWorld": True, "screen": screen, "paused": screen == "pause"})))
+            world = os.path.join(DIR, "inworld.txt")
+            in_world = open(world, encoding="utf-8").read().strip() != "0" if os.path.exists(world) else True
+            reply(rid, text(json.dumps({"inWorld": in_world, "screen": screen, "paused": screen == "pause",
+                                        "canJoin": not in_world,
+                                        "lastWorldId": "mp:4494f8c4934660df" if not in_world else None})))
         elif name == "close_screen":
             with open(os.path.join(DIR, "screen.txt"), "w", encoding="utf-8") as f:
                 f.write("none")
             reply(rid, text(json.dumps({"closed": True})))
         elif name in ("get-position", "get_self"):
             reply(rid, text("Position: x=10, y=64, z=-3"))
+        elif name in ("collect_blocks", "travel_to", "craft_item", "plan_craft"):
+            reply(rid, text(f"job #1 {name} [running] 0s — fake job (poll job_status to follow it; job_cancel stops it)"))
+        elif name == "job_status":
+            reply(rid, text("no jobs yet"))
         else:
             reply(rid, text(f"{name} ok"))

@@ -175,3 +175,12 @@ class TestToolCalling(unittest.TestCase):
         self.assertEqual((out["content"], out["tool_calls"]), ("Response: 好", []))
         self.assertNotIn("tools", session.requests[0]["body"])
         self.assertTrue(e.chat_tools([{"role": "user", "content": "hi"}], None)["error"])
+
+    def test_the_last_step_can_forbid_calls_while_still_naming_the_tools(self):
+        # with no tools at all the model sometimes wrote the call out as text (DSML markup) and she said it
+        e, session = engine([ok("Response: 好")])
+        tools = [{"type": "function", "function": {"name": "mc_skill", "parameters": {"type": "object"}}}]
+        out = e.chat_tools([{"role": "user", "content": "好"}], tools, tool_choice="none")
+        body = session.requests[0]["body"]
+        self.assertEqual((body["tools"], body["tool_choice"]), (tools, "none"))
+        self.assertEqual(out["content"], "Response: 好")

@@ -740,6 +740,8 @@ class Toolbox:
 
     def specs(self, ctx: ToolContext) -> List[Dict[str, Any]]:
         tools = self.available(ctx)
+        if ctx.origin == "game":                                   # a game turn gets her game body, not the browser
+            tools = [t for t in tools if t.group in ("", "minecraft")]
         if ctx.origin != "game" and any(t.group for t in tools):   # browsing takes more rounds than looking something up
                                                                     # (a game turn stays short: the next one comes right after)
             ctx.max_steps = max(ctx.max_steps or 0, getattr(self.gw, "mcp_steps", 10))
@@ -749,6 +751,8 @@ class Toolbox:
     def menu(self, ctx: ToolContext, native: bool) -> str:
         """The [工具] block of her prompt."""
         tools = self.available(ctx)
+        if ctx.origin == "game":                                   # in the game: no browser talk, keep the turn small
+            tools = [t for t in tools if t.group in ("", "minecraft")]
         # (no clock here: this block is part of the cached beginning of the prompt; the time is in [环境])
         head = ("需要的话可以调用工具（可以连续用几次，系统会把结果给你），"
                 "用完再回答。不需要就直接回答，别为了用而用。")

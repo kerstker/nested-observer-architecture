@@ -137,9 +137,11 @@ class DeepSeekEngine:
         return {"reply": text}
 
     def chat_tools(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], max_tokens: int = 300,
-                   temperature: float = 0.7) -> Dict[str, Any]:
+                   temperature: float = 0.7, tool_choice: Optional[str] = None) -> Dict[str, Any]:
         """一轮带工具的对话。返回 {"content": str, "tool_calls": [{"id", "name", "arguments"(dict)}], "raw": message}；
-        失败时 {"content": "", "tool_calls": [], "error": str}。messages 原样发出（调用方负责拼好 tool 轮）。"""
+        失败时 {"content": "", "tool_calls": [], "error": str}。messages 原样发出（调用方负责拼好 tool 轮）。
+        `tool_choice`: None/"auto" 让模型自己决定；"none" 表示这一轮只许回答、不许调用（工具说明仍发给它，
+        免得它把一次没机会执行的调用写成文本吐出来）。"""
         body = {
             "model": self.model,
             "messages": messages,
@@ -150,7 +152,7 @@ class DeepSeekEngine:
         }
         if tools:
             body["tools"] = tools
-            body["tool_choice"] = "auto"
+            body["tool_choice"] = tool_choice or "auto"
         try:
             message = self._post_message(body)
         except Exception as e:

@@ -2531,17 +2531,25 @@ Response: [说出口的话]
         messages = engine.chatml_to_messages(prompt)
         if media and hasattr(engine, "with_media"):
             messages = engine.with_media(messages, media)
+        self.pending_mc_media = None                    # a frame from an earlier turn must not leak into this one
         tools = self.toolbox.specs(ctx)
         steps = max(self.agent_max_steps, ctx.max_steps or 0)       # browsing takes more rounds
         for step in range(steps + 1):
             last = step == steps
             started = time.perf_counter()
-            out = await asyncio.to_thread(engine.chat_tools, messages, None if last else tools,
-                                          int(params.get("max_tokens", 200)) + 150, params.get("temperature", 0.7))
+            # On the last step the tools stay named to the model but stop being callable: with no tools at all it
+            # sometimes wrote the call out as text (DeepSeek's DSML markup), which she then said in game chat.
+            try:
+                out = await asyncio.to_thread(engine.chat_tools, messages, tools,
+                                              int(params.get("max_tokens", 200)) + 150,
+                                              params.get("temperature", 0.7), "none" if last else None)
+            except TypeError:                               # an engine whose chat_tools has no tool_choice argument
+                out = await asyncio.to_thread(engine.chat_tools, messages, None if last else tools,
+                                              int(params.get("max_tokens", 200)) + 150, params.get("temperature", 0.7))
             self._keep_for_console("llm_trace", {
                 "t": clock.now(), "caller": f"agent_step_{step}" if ctx.origin == "reply" else f"task_step_{step}",
                 "params": {"max_tokens": int(params.get("max_tokens", 200)) + 150, "temperature": params.get("temperature"),
-                           "tools": len(tools) if not last else 0},
+                           "tools": len(tools), "tool_choice": "none" if last else "auto"},
                 "media": len(media or []), "prompt": json.dumps(messages[-3:], ensure_ascii=False, default=str)[-6000:],
                 "seconds": round(time.perf_counter() - started, 2), "error": out.get("error"),
                 "reply": out.get("content") + ("".join(f"\n→ {c['name']}({json.dumps(c['arguments'], ensure_ascii=False)})"
@@ -2558,6 +2566,14 @@ Response: [说出口的话]
                 logger.info(f"[Agent] {ctx.nickname or ctx.user_id} -> {c['name']}({c['arguments']})")
                 result = await self.toolbox.run(c["name"], c["arguments"], ctx)
                 messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
+            # A tool may have taken a real look at the game screen: the picture rides with the next step, so she
+            # reads it while she is still deciding what to do (not in some later turn when the moment is gone).
+            pending = getattr(self, "pending_mc_media", None)
+            if pending:
+                self.pending_mc_media = None
+                messages.append({"role": "user", "content": "（这是你刚才看到的那张画面。）"})
+                if hasattr(engine, "with_media"):
+                    messages = engine.with_media(messages, [pending])
             if step == steps - 1:
                 messages.append({"role": "user", "content": "（工具已经用够了，现在根据拿到的结果直接回答，按 Thought/Response 格式。）"})
         return self._parse_reply(out.get("content") or "", emo_state) if out.get("content") else ""
@@ -3158,6 +3174,12 @@ Response: 一段手记：这次看了什么、有什么有意思的（100 字以
         final_response = re.sub(r'Action:\s*EXECUTE_CODE.*?```(?:python)?.*?```', '', final_response, flags=re.DOTALL).strip()
         final_response = re.sub(r'Action:\s*EVOLVE\s+task=".*?"', '', final_response, flags=re.DOTALL).strip()
         final_response = re.sub(r'Action:\s*[A-Z_]+\s*(query|title|content|tags|task)?=".*?"', '', final_response).strip()
+
+        # Tool-call markup a model may write out as text instead of making a real call (DeepSeek DSML tokens,
+        # ChatML markers): it is an instruction for a tool, never a word she says.
+        final_response = re.sub(r'^[^\n]*DSML[^\n]*$', '', final_response, flags=re.MULTILINE)
+        final_response = re.sub(r'</?[｜|][^<>\n]*>', '', final_response)
+        final_response = re.sub(r'^[ \t]*(?:invoke|parameter)\s+name\s*=.*$', '', final_response, flags=re.MULTILINE).strip()
 
         final_response = re.sub(r'\[完成[:：]\s*\d+\]', '', final_response).strip()
         # Gestures are done, not said: [戳一戳] / [回应:赞]

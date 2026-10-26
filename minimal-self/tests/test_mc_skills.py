@@ -122,6 +122,55 @@ class TestSkills(unittest.TestCase):
         wait(s)
         self.assertIn("都试过了", s.last_result)
 
+    def test_she_does_not_mine_through_walls(self):
+        from src.levels.l8_agency.mc_skills import first_obstacle, sight_cells
+        cells = sight_cells((0.5, 65.6, 0.5), (4, 64, 0))
+        self.assertTrue(all(c != (4, 64, 0) for c in cells))
+        self.assertEqual(cells[0], (0, 65, 0))
+        world = FakeWorld(logs=(64,), x=4, z=0)
+        world.me = {"x": 0.5, "y": 64.0, "z": 0.5}
+        self.assertIsNone(first_obstacle(world.rpc, (0.5, 65.62, 0.5), (4, 64, 0)))
+        world.blocks[(2, 64, 0)] = "minecraft:stone"
+        world.blocks[(2, 65, 0)] = "minecraft:stone"
+        hit = first_obstacle(world.rpc, (0.5, 65.62, 0.5), (4, 64, 0))
+        self.assertEqual(hit[3], "minecraft:stone")
+        s = Skills(world.rpc)
+        self.assertFalse(s._break(4, 64, 0))                                   # the log stays: no mining through stone
+        self.assertEqual(world.blocks[(4, 64, 0)], "minecraft:oak_log")
+        self.assertFalse([p for m, p in world.calls if m == "interact.breakBlock"])
+
+    def test_leaves_in_the_way_are_knocked_out_first(self):
+        world = FakeWorld(logs=(64,), x=4, z=0)
+        world.me = {"x": 0.5, "y": 64.0, "z": 0.5}
+        world.blocks[(2, 64, 0)] = "minecraft:oak_leaves"
+        world.blocks[(2, 65, 0)] = "minecraft:oak_leaves"
+        rpc = world.rpc
+
+        def rpc_with_leaves(m, p):                       # leaves break like logs in this fake
+            if m == "interact.breakBlock" and world.blocks.get((p["x"], p["y"], p["z"]), "").endswith("leaves"):
+                world.calls.append((m, p))
+                world.blocks[(p["x"], p["y"], p["z"])] = "minecraft:air"
+                return {"started": True}
+            return rpc(m, p)
+        world.rpc = rpc_with_leaves
+        s = Skills(world.rpc)
+        s._break(4, 64, 0)
+        broke = [(p["x"], p["y"], p["z"]) for m, p in world.calls if m == "interact.breakBlock"]
+        self.assertTrue(broke and world.blocks.get(broke[0], "").endswith("air"))
+        self.assertIn(broke[0], ((2, 64, 0), (2, 65, 0)))                        # the leaves went first
+
+    def test_turning_is_gradual(self):
+        world = FakeWorld()
+        world.me.update({"yaw": 0.0, "pitch": 0.0})
+        s = Skills(world.rpc)
+        t = time.time()
+        s._smooth_look(world.me["x"] - 10, world.me["y"] + 1.62, world.me["z"], 0.2)     # a 90-degree turn
+        looks = [p for m, p in world.calls if m == "control.look"]
+        self.assertGreater(len(looks), 10)
+        steps = [abs(b["yaw"] - a["yaw"]) for a, b in zip(looks, looks[1:])]
+        self.assertLess(max(steps), 20)                                          # no snap
+        self.assertGreater(time.time() - t, 0.2)
+
     def test_go_to_someone(self):
         world = FakeWorld()
         s = Skills(world.rpc, who=lambda name: {"x": 20, "y": 64, "z": 3} if name == "Steve" else None)

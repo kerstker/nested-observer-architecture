@@ -6,9 +6,11 @@ recipes and craft, but its MCP server (0.8.0) does not offer those as tools. The
 directly (the same loopback address and token), so she can actually use a chest or a crafting table.
 They belong to the "minecraft" group: the same tiers, firewall and lockdown as the rest of her game body.
 """
+import http.client
 import json
-import urllib.request
+import threading
 from typing import Any, Dict
+from urllib.parse import urlparse
 
 from src.levels.l8_agency import access
 
@@ -20,10 +22,8 @@ def call_bridge(gw, method: str, params: Dict[str, Any] = None, timeout: float =
     if not url:
         return "游戏身体没有连上。"
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}).encode()
-    req = urllib.request.Request(url.rstrip("/") + "/rpc", data=body,
-                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
     try:
-        out = json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8"))
+        out = json.loads(_post(url, token, body, timeout))
     except Exception as e:
         return f"出错了：连不上游戏（{type(e).__name__}）"
     if not out.get("ok", True) or "error" in out:
@@ -31,6 +31,28 @@ def call_bridge(gw, method: str, params: Dict[str, Any] = None, timeout: float =
         return "出错了：" + str(err.get("message") if isinstance(err, dict) else err)
     text = json.dumps(out.get("result", out), ensure_ascii=False)
     return text[:limit] if limit else text
+
+_local = threading.local()
+
+def _post(url: str, token: str, body: bytes, timeout: float) -> str:
+    """POST to the bridge over a connection this thread keeps open (reopened once if the game closed it)."""
+    u = urlparse(url)
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    for attempt in (0, 1):
+        conn = getattr(_local, "conn", None)
+        if conn is None or getattr(_local, "url", None) != url:
+            conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=timeout)
+            _local.conn, _local.url = conn, url
+        conn.timeout = timeout
+        try:
+            conn.request("POST", (u.path.rstrip("/") or "") + "/rpc", body=body, headers=headers)
+            return conn.getresponse().read().decode("utf-8")
+        except (http.client.HTTPException, OSError):
+            conn.close()
+            _local.conn = None
+            if attempt:
+                raise
+    raise OSError("unreachable")
 
 def _available(gw, ctx) -> bool:
     hub = getattr(gw, "mcp", None)
@@ -79,6 +101,36 @@ def tools():
         game = getattr(gw, "game", None)
         return game.who_is_near(float(a.get("radius") or 48)) if game is not None else "游戏身体没有连上。"
 
+    def rejoin(gw, ctx, a):
+        game = getattr(gw, "game", None)
+        if game is None:
+            return "游戏身体没有连上。"
+        return game.rejoin_now()
+
+    def look(gw, ctx, a):
+        game = getattr(gw, "game", None)
+        if game is None:
+            return "游戏身体没有连上。"
+        return game.look_now()
+
+    def look_at(gw, ctx, a):
+        game = getattr(gw, "game", None)
+        if game is None:
+            return "游戏身体没有连上。"
+        return game.look_smooth(float(a.get("x")), float(a.get("y")), float(a.get("z")))
+
+    def mine(gw, ctx, a):
+        game = getattr(gw, "game", None)
+        if game is None:
+            return "游戏身体没有连上。"
+        return game.mine_block(a.get("x"), a.get("y"), a.get("z"))
+
+    def place(gw, ctx, a):
+        game = getattr(gw, "game", None)
+        if game is None:
+            return "游戏身体没有连上。"
+        return game.place_block(a.get("x"), a.get("y"), a.get("z"), str(a.get("item") or ""))
+
     def skill(gw, ctx, a):
         game = getattr(gw, "game", None)
         if game is None:
@@ -88,6 +140,8 @@ def tools():
             return game.skills.stop()
         if name == "status":
             return game.skills.status()
+        if game.job_running():
+            return "后台任务正在做（用 job_status 看进度）；先别开新的动作，等它做完，或者先 job_cancel。"
         args = {"player": str(a["player"])} if name == "go_to_player" and a.get("player") else {}
         return game.skills.start(name, **args)
 
@@ -105,7 +159,9 @@ def tools():
         return json.dumps(found, ensure_ascii=False)[:3000] if found else "附近没找到。"
 
     def common(**kw):
-        return dict(available=_available, timeout=15, group=SERVER, **kw)
+        base = dict(available=_available, timeout=15, group=SERVER)
+        base.update(kw)
+        return base
 
     return [
         Tool("mc_open_block", "在游戏里打开身边的箱子、工作台、熔炉之类（要走到够得着的地方）。",
@@ -128,6 +184,20 @@ def tools():
                     limit=_i("最多几个，默认 20")), find, **common(read_only=True)),
         Tool("mc_who_is_near", "看看身边有哪些玩家（叫得出名字的会写名字、多远）和哪些生物。",
              _props(radius=_i("多远以内，默认 48 格")), near, **common(read_only=True)),
+        Tool("mc_rejoin_world", "掉线或者回到主菜单之后，重新进入上一次玩的世界（自动重连一直没成时用这个）。",
+             _props(), rejoin, **common()),
+        Tool("mc_look", "真的看一眼游戏画面：截一张图，随这一轮接下来的思考一起交给模型。看清地形、界面、"
+                        "怪物动作、远处的东西或卡住的时候用（平时每 20 秒左右也会自动看一眼）。",
+             _props(), look, **common(read_only=True)),
+        Tool("mc_look_at", "像人一样慢慢把视线转到某个坐标（不是瞬间转头）。看方块、看人、看路时用。",
+             _props(["x", "y", "z"], x=_i("坐标 x"), y=_i("坐标 y"), z=_i("坐标 z")), look_at, **common()),
+        Tool("mc_mine_block", "像玩家一样挖掉某个坐标的方块：先走近到够得着，再慢慢转过去，自动换最好的工具，"
+                              "然后按住挖，直到挖掉。不要用别的方式隔空挖。",
+             _props(["x", "y", "z"], x=_i("方块 x"), y=_i("方块 y"), z=_i("方块 z")), mine, **common(timeout=50)),
+        Tool("mc_place_block", "像玩家一样在某个空坐标放一个方块：先走近，转向要依附的面，拿好方块再放。"
+                               "item 不写就自动从包里挑一种方块。",
+             _props(["x", "y", "z"], x=_i("目标空位 x"), y=_i("目标空位 y"), z=_i("目标空位 z"),
+                    item=_s("方块物品 id，比如 minecraft:cobblestone；不写就自动挑")), place, **common(timeout=50)),
         Tool("mc_follow", "跟着某个玩家走（身体会自己跟上、看着 ta，直到你说停或者时间到）；player 写 stop 就不跟了。",
              _props(["player"], player=_s("玩家名，或 stop"), minutes=_i("最多跟多久（分钟），默认 20")), follow, **common()),
         Tool("mc_craft", "在打开的工作台（或背包合成格）里按配方摆好材料，然后从结果格拿走。",

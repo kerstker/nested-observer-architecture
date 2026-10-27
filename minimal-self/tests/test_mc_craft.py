@@ -25,6 +25,7 @@ class FakeHands:
         self.grid = {}                             # grid cell (1..9) -> [id, count]
         self.cursor = None
         self.table_open = False
+        self.inventory_open = False
         self.calls = []
 
     def _menu_to_inv(self, slot):
@@ -62,12 +63,15 @@ class FakeHands:
             return {"hotbar": hot, "main": main, "selectedSlot": 0}
         if method == "recipes.query":
             return {"recipes": [r for i in params["items"] for r in RECIPES.get(i, [])]}
+        if method == "inventory.open":
+            self.inventory_open = True
+            return {"opened": True, "screen": "inventory"}
         if method == "container.state":
             slots = [{"slot": k, "id": v[0], "count": v[1]} for k, v in self.grid.items() if v and v[1] > 0]
             res = self._result()
             if res:
                 slots.append({"slot": 0, "id": res["id"], "count": res["count"]})
-            return {"open": self.table_open, "type": "minecraft:crafting" if self.table_open else None, "slots": slots}
+            return {"open": self.table_open, "screenOpen": self.table_open or self.inventory_open, "type": "minecraft:crafting" if self.table_open else None, "slots": slots}
         if method == "container.click":
             slot, button, mode = params["slot"], params.get("button", 0), params.get("mode", "pickup")
             if slot == 0:
@@ -113,6 +117,7 @@ class FakeHands:
             return {}
         if method == "container.close":
             self.table_open = False
+            self.inventory_open = False
             return {}
         return {}
 

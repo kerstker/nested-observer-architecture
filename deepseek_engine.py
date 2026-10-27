@@ -90,7 +90,14 @@ class DeepSeekEngine:
         media: [{"data": bytes, "mime": "image/jpeg"}, ...]
         没有可用的图片时原样返回，消息仍是纯文本（旧行为不变）。
         """
-        pictures = [m for m in (media or []) if m.get("data")][:limit]
+        # A long screenshot comes as its pieces in order ("parts", see napcat.senses.prepare_image): each piece is
+        # one image block, so its words stay readable; `limit` counts pictures, pieces are capped separately.
+        pictures = []
+        for m in [m for m in (media or []) if m.get("data")][:limit]:
+            if m.get("parts"):
+                pictures += [{"data": p, "mime": "image/jpeg"} for p in m["parts"][:6]]
+            else:
+                pictures.append(m)
         if not pictures:
             return messages
         target = next((m for m in reversed(messages) if m.get("role") == "user"), None)

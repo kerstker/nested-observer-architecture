@@ -4,7 +4,7 @@
 > 本文件按**代码现状**重写，替换了 10-25 的旧版。配图是四张 SVG（`docs/architecture-1…4-*.svg`），
 > 由 `python scripts/make_architecture_diagrams.py` 生成：架构变了就改脚本里的方块，运行一次，把新 SVG 一起提交。
 > 数字来自实际统计：核心 `minimal-self/src` 约 1.2 万行，`napcat/` 1.7 千行，`console/` 0.75 千行，`app.py` 等根目录 1.7 千行，
-> 脚本 2.3 千行，测试 5.2 千行（39 个文件，**416 个测试**），行为评估 15 个场景，数据库 **39 张表**。
+> 脚本 2.3 千行，测试 5.2 千行（39 个文件，**789 个测试**），行为评估 15 个场景，数据库 **39 张表**。
 
 ---
 
@@ -156,7 +156,7 @@
 |---|---|---|
 | 你（私聊/控制台） | owner | 全部（除 deny）：浏览器全套、读写文件、`run_python`、上传文件 |
 | `MCP_TRUSTED_USERS`（私聊） | trusted | 浏览器：看+输入+填表 |
-| 她自己的空闲时间 / 游戏自玩 | autonomous | 浏览器：看+往搜索框输入；只有查资料和记笔记的内置工具 |
+| 她自己的空闲时间 / 游戏自玩 | autonomous | 浏览器：看+往搜索框输入；查资料、记笔记、整理自己的小屋、只读地看自己（look_inside） |
 | 游戏聊天里的人（`MC_TRUSTED_PLAYERS`） | player | 只有游戏工具 |
 | 其他人和所有群 | public | 只能看页面（每人每天 12 次、总共 50 次）；不能输入/读文件/跑代码 |
 
@@ -216,7 +216,7 @@
 
 | 工具 | 测什么 |
 |---|---|
-| `minimal-self/tests`（416 个） | 行为、记忆、情绪、工具权限、防火墙（含真实跑脚本）、文档解析、游戏、维护通道… |
+| `minimal-self/tests`（789 个） | 行为、记忆、情绪、工具权限、防火墙（含真实跑脚本）、文档解析、游戏、维护通道… |
 | `scripts/evaluate_life.py` | 15 个行为场景（脚本化模型，测机制） |
 | `scripts/evaluate_quality.py` | 真实模型+真实记忆副本，评审打分（自然/符合预期/诚实） |
 | `scripts/audit_tone.py` | 情商：重放真实消息，评审打 EQ/带刺/个性，前后对比 |
@@ -262,7 +262,7 @@
 | `minimal-self/src/levels/l1…l10` | 感知/记忆/代谢/情绪/价值/稳态/ToM/行动/叙事/意识 |
 | `minimal-self/src/levels/l17…l19` | 自我改进（含维护请求）、知识库、搜索 |
 | `minimal-self/src/evaluation/` | 15 个行为场景与仿真器 |
-| `minimal-self/tests/` | 416 个测试（含 `fake_mcp_server.py`、`fake_mc_server.py`） |
+| `minimal-self/tests/` | 789 个测试（含 `fake_mcp_server.py`、`fake_mc_server.py`） |
 | `scripts/` | 评估/审计、维护请求、改造提案、senses/lora 服务、备份恢复 |
 | `AGENTS.md` | 给 DSH 维护智能体的工作协议 |
 | `docs/` | 本文件 + `图片理解.md` |
@@ -277,5 +277,5 @@ python app.py                                   # 她
 python scripts\maintainer.py list               # 她给维护者的请求
 python scripts\audit_tone.py report new         # 情商评估（先 replay 再 report）
 cd minimal-self
-python -m pytest -q                             # 416 个测试，约 7 分钟
+python -m pytest -q                             # 789 个测试，约 8 分钟
 ```

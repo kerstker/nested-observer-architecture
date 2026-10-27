@@ -25,6 +25,53 @@ logger = logging.getLogger(__name__)
 TABLE = "minecraft:crafting_table"
 
 
+def move_inventory_stack(rpc, source, target, pause=time.sleep):
+    """Visible single-click transaction, followed by an inventory read; no instant stack swap."""
+    inv = rpc("player.getInventory", {}) or {}
+    before = next((v for v in (inv.get("hotbar") or []) + (inv.get("main") or []) if v.get("slot") == source), {})
+    if not before.get("id"):
+        return False
+    opened = rpc("inventory.open", {}) or {}
+    if not opened.get("opened"):
+        return False
+    try:
+        state = rpc("container.state", {}) or {}
+        if not state.get("screenOpen") or (state.get("carried") or {}).get("count", 0) > 0:
+            return False
+        pause(.18)
+        for slot in (source, target, source):
+            if rpc("inventory.click", {"slot": slot, "button": 0, "mode": "pickup"}) is None:
+                return False
+            pause(.14)
+        after = rpc("player.getInventory", {}) or {}
+        entries = (after.get("hotbar") or []) + (after.get("main") or []) + (after.get("armor") or [])
+        if target == 40:
+            gear = rpc("player.getEquipment", {}) or {}
+            actual = gear.get("offHand") or {}
+        else:
+            actual = next((v for v in entries if v.get("slot") == target), {})
+        carried = (rpc("container.state", {}) or {}).get("carried") or {}
+        return (not carried.get("count", 0) and actual.get("id") == before["id"]
+                and actual.get("count", 0) >= before.get("count", 1))
+    finally:
+        rpc("container.close", {})
+
+
+def select_item(rpc, item, stopped=lambda: False, pause=time.sleep):
+    """Hotbar keys are direct; backpack selection uses visible pickup, place, return remainder."""
+    inv = rpc("player.getInventory", {}) or {}
+    chosen = next((v for v in inv.get("hotbar") or [] if v.get("id") == item and v.get("count", 0) > 0), None)
+    if chosen is not None:
+        return rpc("inventory.selectHotbar", {"slot": int(chosen["slot"])}) is not None
+    stored = next((v for v in inv.get("main") or [] if v.get("id") == item and v.get("count", 0) > 0), None)
+    if stored is None or stopped():
+        return False
+    target = int(inv.get("selectedSlot") or 0)
+    if not move_inventory_stack(rpc, int(stored["slot"]), target, pause=pause):
+        return False
+    return rpc("inventory.selectHotbar", {"slot": target}) is not None
+
+
 class PatternIndex:
     """Shaped-recipe patterns by recipe id ("minecraft:wooden_pickaxe" -> ["XXX", " # ", " # "])."""
 
@@ -165,8 +212,13 @@ class Crafter:
         return inv_slot if inv_slot >= 9 else 36 + inv_slot  # her own inventory screen
 
     def _click(self, slot: int, button: int = 0, mode: str = "pickup"):
-        self.rpc("container.click", {"slot": slot, "button": button, "mode": mode})
-        time.sleep(0.05)
+        if self.rpc("container.click", {"slot": slot, "button": button, "mode": mode}) is None:
+            raise RuntimeError("容器点击未被接受，停止继续摆放")
+        time.sleep(0.14)
+        self._menu()  # observe the server-synchronized grid between individual clicks
+        progress = getattr(self.skills, "_work_progress", None)
+        if callable(progress):
+            progress()
 
     def clear_grid(self, table: bool):
         for s in self._menu().get("slots") or []:
@@ -233,6 +285,8 @@ class Crafter:
                         + (t["z"] - me.get("z", 0)) ** 2)
         table = next((t for t in tables if abs(t["y"] - me.get("y", 0)) <= 4
                       and (t["x"] - me.get("x", 0)) ** 2 + (t["z"] - me.get("z", 0)) ** 2 <= 16 ** 2), None)
+        if table is None and hasattr(self.skills, "find_station"):
+            table = self.skills.find_station("crafting_table")      # one she put down a little way back
         if table is None:
             if self.counts().get(TABLE, 0) == 0 and not self.craft(TABLE, 1, depth + 1).startswith("做好了"):
                 return False
@@ -240,6 +294,7 @@ class Crafter:
             if not pos:
                 return False
             table = {"x": pos[0], "y": pos[1], "z": pos[2]}
+            self.placed_table = pos                     # put down just for this: picked up again after crafting
         if not self.skills._approach(table["x"], table["y"], table["z"]):
             return False
         self.skills._smooth_look(table["x"] + 0.5, table["y"] + 0.5, table["z"] + 0.5, 0.3)
@@ -255,6 +310,20 @@ class Crafter:
     # --- the whole thing --------------------------------------------------------------------
 
     def craft(self, item: str, count: int = 1, depth: int = 0) -> str:
+        if depth == 0:
+            self.placed_table = None
+            try:
+                return self._craft(item, count, 0)
+            finally:
+                pos, self.placed_table = getattr(self, "placed_table", None), None
+                if pos and self.skills is not None and hasattr(self.skills, "put_away_table"):
+                    try:
+                        self.skills.put_away_table(pos)
+                    except Exception:
+                        logger.warning("[Craft] could not pick the table up again", exc_info=True)
+        return self._craft(item, count, depth)
+
+    def _craft(self, item: str, count: int = 1, depth: int = 0) -> str:
         item = item if ":" in item else f"minecraft:{item}"
         if depth > 3:
             return f"做 {item} 要绕的步骤太多了。"
@@ -297,9 +366,19 @@ class Crafter:
             table = w > 2 or h > 2
             if table and not self.open_table(depth):
                 return "需要工作台，但没能用上（附近没有、也放不下）。"
-            got = self.craft_once(recipe, table)
-            if table:
+            if not table:
+                opened = self.rpc("inventory.open", {}) or {}
+                if not opened.get("opened") or not self._menu().get("screenOpen"):
+                    return "没能打开自己的背包，暂不在不可见的格子里合成。"
+                time.sleep(.2)
+            if self.skills is not None:
+                self.skills.using_screen = True
+            try:
+                got = self.craft_once(recipe, table)
+            finally:
                 self.rpc("container.close", {})
+                if self.skills is not None:
+                    self.skills.using_screen = False
             if got <= 0:
                 return f"摆好了但没出 {item.split(':')[-1]}（可能这个配方服务器不认）。"
             made += got

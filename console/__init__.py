@@ -101,6 +101,7 @@ def _install_log_buffer() -> LogBuffer:
 def create_console_router(gw, token: str = None) -> APIRouter:
     router = APIRouter(prefix="/console")
     logs = _install_log_buffer()
+    gw.log_buffer = logs              # what she reads with look_inside(what=logs)
 
     def authorize(request: Request):
         if token:
@@ -362,6 +363,58 @@ def create_console_router(gw, token: str = None) -> APIRouter:
         if not result.get("ok"):
             raise HTTPException(400, result.get("error") or "应用失败")
         return json_response(result)
+
+    # ---- 她的小屋（收藏）和她的身体（只读）----
+    # The room is hers: the console can look, and can take something out at the owner's word; it never puts
+    # things in (that is her choice, the `keep` tool).
+    @router.get("/api/room")
+    async def room_view(request: Request, q: str = "", kind: str = "", favorites: bool = False, offset: int = 0):
+        authorize(request)
+        ks = getattr(gw, "keepsakes", None)
+        if ks is None:
+            return json_response({"enabled": False, "items": [], "stats": {}})
+        items = await asyncio.to_thread(ks.list, q, kind, favorites, 60, offset)
+        return json_response({"enabled": True, "stats": await asyncio.to_thread(ks.stats),
+                              "items": [{k: v for k, v in i.items() if k not in ("file",)} for i in items]})
+
+    @router.get("/api/room/{item_id}/file")
+    async def room_file(item_id: int, request: Request, thumb: bool = False):
+        authorize(request)
+        ks = getattr(gw, "keepsakes", None)
+        item = ks.get(item_id) if ks else None
+        if not item or not item.get("file"):
+            raise HTTPException(404, "没有这样东西")
+        if thumb and item["kind"] == "picture":
+            data = await asyncio.to_thread(ks.thumbnail, item, 480)
+            if data:
+                return Response(data, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
+        data = await asyncio.to_thread(ks.data, item)
+        if data is None:
+            raise HTTPException(404, "文件不见了")
+        mime = item.get("mime") or "application/octet-stream"
+        name = item.get("name") or f"keepsake-{item_id}"
+        disposition = "inline" if mime.startswith("image/") else "attachment"
+        from urllib.parse import quote
+        return Response(data, media_type=mime, headers={
+            "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(name)}",
+            "X-Content-Type-Options": "nosniff", "Cache-Control": "max-age=86400"})
+
+    @router.post("/api/room/forget")
+    async def room_forget(body: TaskRequest, request: Request):
+        authorize(request)
+        ks = getattr(gw, "keepsakes", None)
+        gone = await asyncio.to_thread(ks.forget, body.id) if ks else None
+        if not gone:
+            raise HTTPException(404, "没有这样东西")
+        return json_response({"ok": True, "title": gone["title"]})
+
+    @router.get("/api/body")
+    async def body_view(request: Request):
+        authorize(request)
+        view = getattr(gw, "self_view", None)
+        if view is None:
+            return json_response({})
+        return json_response(await asyncio.to_thread(view.body))
 
     # ---- QQ 能力（调试 / 手动触发）：OCR、取图、语音转写、合并转发、群历史 ----
     @router.post("/api/qq")

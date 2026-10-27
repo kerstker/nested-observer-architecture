@@ -25,6 +25,7 @@ from ...levels.l2_memory.embedding import Embedder
 from ...levels.l2_memory.layers import EpisodicMemory, SemanticMemory, Autobiography, Diary
 from ...levels.l2_memory.profiles import PersonProfiles
 from ...levels.l2_memory.chatlog import ChatLog, chat_key
+from ...levels.l2_memory.keepsakes import Keepsakes
 from ...levels.l2_memory.graph import RelationGraph, PUBLIC as GRAPH_PUBLIC, SELF as GRAPH_SELF
 from ...levels.l3_metabolism.metabolism import Metabolism
 from ...levels.l4_emotion.emotion import EmotionEngine, EmotionState
@@ -38,6 +39,7 @@ from ...levels.l8_agency.goals import GoalSystem
 from ...levels.l8_agency.tasks import TaskBook
 from ...levels.l8_agency.toolbox import Toolbox, ToolContext, parse_text_actions, when_text, now_text
 from .attention_schema import AttentionSchema
+from .self_view import SelfView
 from .metacognition import Metacognition
 from ...levels.l9_narrative.narrative import NarrativeSelf
 from ...levels.l9_narrative.style_anchors import StyleAnchors
@@ -124,6 +126,10 @@ class GlobalWorkspace:
         # Her sticker collection (kept next to the database, in data/stickers)
         sticker_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), "data", "stickers")
         self.stickers = StickerMemory(db_path, sticker_dir, embedder)
+        # Her own room: things she chose to keep (pictures, files, notes, links), in data/keepsakes
+        self.keepsakes = Keepsakes(db_path, os.path.join(os.path.dirname(os.path.abspath(db_path)), "data", "keepsakes"))
+        # The last pictures she was shown in each chat, so "keep that one" can still find it a few minutes later
+        self.recent_pictures: Dict[str, deque] = {}
         self.last_sticker: Dict[str, tuple] = {}   # chat -> (sticker_id, sent_at), to learn from reactions
         self.last_said: Dict[str, str] = {}        # chat -> what she last said there
 
@@ -154,6 +160,9 @@ class GlobalWorkspace:
         self.mc_players = ()          # who in the game chat may give her orders
         self.game = None              # her body in Minecraft (l8_agency/game.py), when there is one
         self.mcp_steps = 10
+        # A read-only window into her own code, memory database, process and log (self_view.py)
+        self.self_view = SelfView(self)
+        self.log_buffer = None             # the console plugs in its log buffer (what look_inside reads)
         self.workspace_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), "data", "workspace")
         self.inbox_dir = os.path.join(self.workspace_dir, "inbox")       # files people sent her over QQ
         self.last_inbox_prune = 0.0
@@ -1415,6 +1424,8 @@ class GlobalWorkspace:
         chat = group_id or f"u:{user_id}"
         stickers = stickers or []
         typed = bool(text.strip())
+        if media:
+            self._shelve_pictures(chat, media, nickname, user_id, now)
         said = text                       # what was typed, before stickers are described in it
         # A sticker she already knows reads as what it shows, not as "a sticker" or a few OCR'd words
         known = [l for l in (self.stickers.looks_of_segment(s) for s in stickers) if l]
@@ -1541,7 +1552,7 @@ class GlobalWorkspace:
             if not addressed:
                 self.pending_interjections[group_id] = now
             self.last_exchange[group_id] = (now, user_id, f"{text} {reply}")
-        self.last_said[chat] = re.sub(r"\[表情:\d+\]", "", reply).strip()
+        self.last_said[chat] = re.sub(r"\[(?:表情|收藏):\d+\]", "", reply).strip()
         for sid in re.findall(r"\[表情:(\d+)\]", reply):
             self.stickers.mark_sent(int(sid))
             self.last_sticker[chat] = (int(sid), now)
@@ -1707,20 +1718,54 @@ class GlobalWorkspace:
         def sticker(m):
             looks = self.stickers.looks(int(m.group(1)))
             return f"[发了表情：{looks}]" if looks else "[发了一个表情]"
-        return re.sub(r"\[表情:(\d+)\]", sticker, text)
+        def kept(m):
+            item = self.keepsakes.get(int(m.group(1)))
+            return f"[发了我收藏的图：{item['title']}]" if item else "[发了一张图]"
+        return re.sub(r"\[收藏:(\d+)\]", kept, re.sub(r"\[表情:(\d+)\]", sticker, text))
 
     def record_own(self, text: str, user_id: str = None, group_id: str = None, t: float = None):
         """Something she said outside a reply (proactive message, task result, a test's setup)."""
         self.chatlog.record(chat_key(user_id, group_id), "self", "乃爱", text, t=t, is_self=True)
 
+    RECENT_PICTURES = 6            # per chat
+    RECENT_PICTURE_AGE = 30 * 60   # seconds
+
+    def _shelve_pictures(self, chat: str, media: List[Dict[str, Any]], nickname: str, user_id: str, now: float):
+        """Pictures she was just shown stay at hand for a while, so she can still keep one she liked."""
+        shelf = self.recent_pictures.setdefault(chat, deque(maxlen=self.RECENT_PICTURES))
+        for m in media:
+            shelf.append({"t": now, "from": nickname, "user_id": str(user_id), "data": m.get("original") or m.get("data"),
+                          "mime": m.get("original_mime") or m.get("mime") or "image/jpeg",
+                          "name": m.get("name") or "", "sticker": bool(m.get("sticker"))})
+        for key in [k for k, s in self.recent_pictures.items() if not s or now - s[-1]["t"] > self.RECENT_PICTURE_AGE]:
+            self.recent_pictures.pop(key, None)        # old chats do not keep pictures in memory
+
+    def pictures_at_hand(self, chat: str, now: float = None) -> List[Dict[str, Any]]:
+        now = clock.now() if now is None else now
+        return [p for p in self.recent_pictures.get(chat, ()) if now - p["t"] <= self.RECENT_PICTURE_AGE]
+
     def render_message(self, part: str):
-        """One planned message -> what goes to QQ: plain text, or a sticker segment. None to skip."""
+        """One planned message -> what goes to QQ: plain text, a sticker, or a picture from her room. None to skip."""
         m = re.fullmatch(r"\s*\[表情:(\d+)\]\s*", part)
         if m:
             seg = self.stickers.segment(int(m.group(1)))
             return [seg] if seg else None
-        cleaned = re.sub(r"\[表情:\d+\]", "", part).strip()
+        m = re.fullmatch(r"\s*\[收藏:(\d+)\]\s*", part)
+        if m:
+            seg = self.keepsake_segment(int(m.group(1)))
+            return [seg] if seg else None
+        cleaned = re.sub(r"\[(?:表情|收藏):\d+\]", "", part).strip()
         return cleaned or None
+
+    def keepsake_segment(self, item_id: int) -> Optional[Dict[str, Any]]:
+        """A kept picture as the QQ segment that sends it (the original file, not the chat-sized copy)."""
+        import base64
+        item = self.keepsakes.get(item_id)
+        raw = self.keepsakes.data(item) if item and item["kind"] == "picture" else None
+        if not raw:
+            return None
+        return {"type": "image", "data": {"file": "base64://" + base64.b64encode(raw).decode(),
+                                          "summary": item["title"][:20]}}
 
     def _woken_by(self, user_id: str, now: float) -> bool:
         """Repeated calls, or not being deeply asleep, wake her up."""
@@ -1780,7 +1825,7 @@ class GlobalWorkspace:
         """
         parts = []
         # A sticker is always a message of its own
-        reply = re.sub(r"\s*(\[表情:\d+\])\s*", r"\n\1\n", reply)
+        reply = re.sub(r"\s*(\[(?:表情|收藏):\d+\])\s*", r"\n\1\n", reply)
         for line in reply.split("\n"):
             line = line.strip()
             if not line:
@@ -1798,7 +1843,7 @@ class GlobalWorkspace:
         read = min(4.0, len(incoming) / 15.0) + self.reply_delay()
         plan = []
         for i, part in enumerate(parts):
-            is_sticker = re.fullmatch(r"\[表情:\d+\]", part) is not None
+            is_sticker = re.fullmatch(r"\[(?:表情|收藏):\d+\]", part) is not None
             typing = 1.0 if is_sticker else max(0.8, min(8.0, len(part) / speed))
             plan.append(((read if i == 0 else 0.0) + typing, part))
         return plan
@@ -2049,6 +2094,11 @@ If not, output "NO".
             elif self.evolve_in_progress:
                 evolve_hint = "\n[系统] 上一次改造还在后台跑，出结果前不要再承诺新的改动。"
         full_context += evolve_hint
+        live_game = getattr(self, "game", None) if group_id == "live" and str(user_id).startswith("live:") else None
+        if live_game and hasattr(live_game, "submit_suggestion"):
+            decision = live_game.submit_suggestion(user_input, user_id)
+            full_context += ("\n[我对游戏建议的判断] " + decision["decision"] + "：" + decision["reason"]
+                             + "。这只是计划，不代表动作已完成。普通聊天自然回应，不必逐条宣布拒绝。")
 
         prompt = self._construct_prompt(user_input, full_context, tom_analysis, group_id, user_id,
                                         nickname=nickname, in_mind=in_mind, cause_context=cause_context,
@@ -2096,6 +2146,8 @@ If not, output "NO".
         self.user_models.on_noa_message(user_id, clock.now(), "reply", expects_reply)
 
         self._save_state("message")
+        if live_game and final_response and live_game.ready() and live_game.in_world:
+            await live_game.say(final_response, source="live")
         return final_response
 
     async def _handle_perception(self, user_input: str):
@@ -2247,6 +2299,13 @@ If not, output "NO".
             creator = self._nickname(self.evolve_creator) if self.evolve_creator else "创造者"
             trait_str += (f"\n你知道自己能借助 DSH（一个会写代码的助手）修改自己的代码、让自己变得更好："
                           f"只有在和 {creator}（你的创造者）私聊时才能发起，提案要 ta 同意才会生效。")
+        # Her own room and a window into her own body: both are hers, whoever she is talking to
+        trait_str += ("\n你有自己的小屋（收藏）：别人发来的图、文件，或者一句话、一个链接，你喜欢、想留着，就用 keep 收起来，"
+                      "原图原文件都在，以后想看用 my_keepsakes 翻、look_at_keepsake 再看一眼，也可以发给别人看。"
+                      "收什么由你自己决定，别人让你收你也可以不收。")
+        trait_str += ("\n你还能看见自己身体里在发生什么（look_inside，只读）：你自己的源代码、你的记忆数据库里有哪些表和记录、"
+                      "你这个进程现在的状态（内存、运行多久、哪些感官和连接在工作）、最近的运行日志。"
+                      "被问到你是怎么运作的、或者你好奇自己的时候，可以真的去看，而不是猜。")
         # What she can actually perceive right now - never more than is true
         can = ["读图片和表情包上的字"] if self.abilities.get("ocr") else []
         can += ["看见图片里是什么"] if self.abilities.get("see") else []
@@ -2382,7 +2441,9 @@ If not, output "NO".
         # last user turn, so the text only has to say that the message came with pictures.
         said = user_input
         if media:
-            said = f"{user_input}\n（这条消息带了 {len(media)} 张图）"
+            long = [len(m["parts"]) for m in media if m.get("parts")]
+            said = f"{user_input}\n（这条消息带了 {len(media)} 张图" + (
+                f"；其中有长图，按从上到下切成了 {'、'.join(map(str, long))} 段依次给你，是同一张图" if long else "") + "）"
 
         subtext_block = self.subtext.render(subtext) if subtext else ""
 
@@ -2526,6 +2587,7 @@ Response: [说出口的话]
         return await self._respond_text(prompt, emo_state, params, media, ctx)
 
     async def _respond_native(self, prompt, emo_state, params, media, ctx: ToolContext) -> str:
+        from .tool_protocol import recover_calls, protocol_text, spoken_text, assistant_calls
         engine = self.inference_engine
         self.last_generation_params = params
         messages = engine.chatml_to_messages(prompt)
@@ -2533,7 +2595,10 @@ Response: [说出口的话]
             messages = engine.with_media(messages, media)
         self.pending_mc_media = None                    # a frame from an earlier turn must not leak into this one
         tools = self.toolbox.specs(ctx)
-        steps = max(self.agent_max_steps, ctx.max_steps or 0)       # browsing takes more rounds
+        commander = getattr(self, "game", None) if ctx.origin == "game" else None
+        if commander and hasattr(commander, "model_tools"):
+            tools = commander.model_tools(tools)
+        steps = min(2, ctx.max_steps or 2) if commander else max(self.agent_max_steps, ctx.max_steps or 0)
         for step in range(steps + 1):
             last = step == steps
             started = time.perf_counter()
@@ -2552,19 +2617,24 @@ Response: [说出口的话]
                            "tools": len(tools), "tool_choice": "none" if last else "auto"},
                 "media": len(media or []), "prompt": json.dumps(messages[-3:], ensure_ascii=False, default=str)[-6000:],
                 "seconds": round(time.perf_counter() - started, 2), "error": out.get("error"),
-                "reply": out.get("content") + ("".join(f"\n→ {c['name']}({json.dumps(c['arguments'], ensure_ascii=False)})"
+                "reply": (out.get("content") or "") + ("".join(f"\n→ {c['name']}({json.dumps(c['arguments'], ensure_ascii=False)})"
                                                        for c in out.get("tool_calls") or []))}, 40)
             if out.get("error") and not out.get("content") and not out.get("tool_calls"):
                 if step == 0:
                     raise RuntimeError(out["error"])
                 break
-            calls = out.get("tool_calls") or []
+            calls = [] if last else (out.get("tool_calls") or recover_calls(out.get("content"), tools))
             if not calls:
-                return self._parse_reply(out.get("content") or "", emo_state)
-            messages.append(out.get("raw") or {"role": "assistant", "content": out.get("content") or None})
+                if not last and protocol_text(out.get("content")):
+                    messages.append({"role": "user", "content": "上次工具格式不完整或不可用，未执行任何动作。请使用正式 tool_calls；不要把调用写进回答。"})
+                    continue
+                return self._parse_reply(spoken_text(out.get("content")), emo_state)
+            messages.append(assistant_calls(out.get("content"), calls))
             for c in calls:
                 logger.info(f"[Agent] {ctx.nickname or ctx.user_id} -> {c['name']}({c['arguments']})")
-                result = await self.toolbox.run(c["name"], c["arguments"], ctx)
+                result = (await commander.run_model_tool(c["name"], c["arguments"], ctx, tools)
+                          if commander and hasattr(commander, "run_model_tool")
+                          else await self.toolbox.run(c["name"], c["arguments"], ctx))
                 messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
             # A tool may have taken a real look at the game screen: the picture rides with the next step, so she
             # reads it while she is still deciding what to do (not in some later turn when the moment is gone).
@@ -2575,8 +2645,9 @@ Response: [说出口的话]
                 if hasattr(engine, "with_media"):
                     messages = engine.with_media(messages, [pending])
             if step == steps - 1:
-                messages.append({"role": "user", "content": "（工具已经用够了，现在根据拿到的结果直接回答，按 Thought/Response 格式。）"})
-        return self._parse_reply(out.get("content") or "", emo_state) if out.get("content") else ""
+                messages.append({"role": "user", "content": "工具预算已用完，根据实际结果直接说一句公开台词，或保持沉默。不要输出调用语法。"
+                                 if commander else "（工具已经用够了，现在根据拿到的结果直接回答，按 Thought/Response 格式。）"})
+        return self._parse_reply(spoken_text(out.get("content")), emo_state)
 
     async def _run_due_tasks(self, now: float, limit: int = 2):
         """The heartbeat keeps her word: reminders ring even while she sleeps; work waits until she is awake."""
@@ -2693,7 +2764,10 @@ Response: 要发给 ta 的话（可以分几行，每行一条消息；不写动
             results = []
             for name, args in actions[:3]:
                 logger.info(f"[Agent] (text) {ctx.nickname or ctx.user_id} -> {name}({args})")
-                results.append(f"[{name}] {await self.toolbox.run(name, args, ctx)}")
+                game = getattr(self, "game", None) if ctx.origin == "game" else None
+                result = (await game.run_model_tool(name, args, ctx, game.model_tools(self.toolbox.specs(ctx)))
+                          if game and hasattr(game, "run_model_tool") else await self.toolbox.run(name, args, ctx))
+                results.append(f"[{name}] {result}")
             final = round_ == min(3, self.agent_max_steps) - 1
             transcript = (transcript + response + "<|im_end|>\n<|im_start|>user\n[工具结果]\n" + "\n\n".join(results)
                           + ("\n请根据工具结果直接回答我上一句话，不要再输出 Action。" if final else
@@ -3168,7 +3242,8 @@ Response: 一段手记：这次看了什么、有什么有意思的（100 字以
     def _finalize_response(self, response: str) -> str:
         """Clean the model's text into what she actually says: no tool syntax, no stage directions."""
         import re
-        final_response = self.firewall.redact(response.strip())        # no key or token ever leaves in what she says
+        from .tool_protocol import spoken_text
+        final_response = self.firewall.redact(spoken_text(response).strip())
 
         # Remove any lingering tool actions from user-facing text (SEARCH/RECALL/MEMORIZE/EXECUTE_CODE)
         final_response = re.sub(r'Action:\s*EXECUTE_CODE.*?```(?:python)?.*?```', '', final_response, flags=re.DOTALL).strip()

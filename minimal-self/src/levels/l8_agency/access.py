@@ -51,7 +51,9 @@ DEFAULT_SERVERS: Dict[str, Dict[str, Any]] = {
 }
 
 # Her own tools in her free time: look things up and remember them, nothing that reaches other people
-AUTONOMOUS_BUILTIN = {"recall", "remember", "web_search", "read_webpage", "ask_maintainer"}
+AUTONOMOUS_BUILTIN = {"recall", "remember", "web_search", "read_webpage", "ask_maintainer",
+                      # her own room and the read-only window into herself are hers in her own time too
+                      "keep", "my_keepsakes", "look_at_keepsake", "change_keepsake", "look_inside"}
 
 class Budget:
     """How much of an outside tool the public may use in a day: a few each, and a limit for everyone together."""

@@ -17,7 +17,7 @@ from src.levels.l8_agency import access
 from src.levels.l8_agency.game import (GameBridge, mcpfabric_server, minecraft_server, parse_chat, parse_events,
                                        shrink_png, split_for_chat, strip_tool_markup)
 from src.levels.l8_agency.mcp import McpHub
-from src.levels.l8_agency.toolbox import ToolContext
+from src.levels.l8_agency.toolbox import GAME_TOOLS, ToolContext
 from src.levels.l10_consciousness.global_workspace import GlobalWorkspace
 
 FAKE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fake_mc_server.py")
@@ -223,6 +223,23 @@ class TestGame(unittest.TestCase):
 
 
 class TestMcpfabric(unittest.TestCase):
+
+    def test_live_viewer_cannot_read_game_memory_or_control_tools(self):
+        self._image_bridge()
+        context = ToolContext("live:123456", "直播观众", "live")
+        self.assertEqual(access.tier_of(self.gw, context), access.PUBLIC)
+        names = {tool.name for tool in self.gw.toolbox.available(context)}
+        self.assertEqual(names, set())
+        self.assertEqual(self.gw.toolbox.specs(context), [])
+        from src.levels.l8_agency.toolbox import Tool
+        called = []
+        self.gw.toolbox.tools["probe_live_boundary"] = Tool(
+            "probe_live_boundary", "test", {"type": "object", "properties": {}},
+            lambda *args: called.append(True) or "executed")
+        for name in ("probe_live_boundary", "mc_skill", "mc_recall", "read_file", "run_python"):
+            result = asyncio.run(self.gw.toolbox.run(name, {}, context))
+            self.assertIn("不能调用工具", result)
+        self.assertFalse(called)
     """The same life in a real modded client: the mcpfabric bridge."""
 
     def setUp(self):
@@ -244,6 +261,50 @@ class TestMcpfabric(unittest.TestCase):
         self.gw.mc_players = ("*",)
         self.game = GameBridge(self.gw, "Noa", names=("乃爱",), poll_seconds=0)
         self.gw.game = self.game
+
+    def test_a_fight_takes_the_sword_and_pauses_the_work(self):
+        import time as _t
+        self._image_bridge()
+        calls = []
+        self.game._rpc = lambda m, p=None, timeout=5.0: calls.append((m, p)) or {}
+        held = []
+        self.game.skills.best_tool = lambda kind: "minecraft:iron_sword" if kind == "sword" else None
+        self.game.skills.hold = lambda item: held.append(item) or True
+        self.game.health, self.game.food, self.game.on_ground = 20.0, 20.0, True
+        self.game.in_world = self.game.connected = True
+        self.game.ready = lambda: True
+        self.game.hostiles = [{"type": "minecraft:zombie", "distance": 2.5, "uuid": "z1", "x": 1, "y": 64, "z": 1}]
+        self.assertEqual(self.game.survive(clock.now() + 100), "fight")
+        self.assertEqual(held, ["minecraft:iron_sword"])
+        self.assertGreater(self.game.skills.pause_until, _t.time())
+        self.assertIn(("interact.attackEntity", {"uuid": "z1"}), calls)
+        # an archer at range, with a shield in the off hand: shield up instead of standing in the open
+        calls.clear()
+        self.game._rpc = lambda m, p=None, timeout=5.0: calls.append((m, p)) or (
+            {"offHand": {"id": "minecraft:shield"}} if m == "player.getEquipment" else {})
+        self.game.hostiles = [{"type": "minecraft:skeleton", "distance": 10, "uuid": "s1", "x": 9, "y": 64, "z": 1}]
+        self.game.survive(clock.now() + 200)
+        self.assertIn(("control.startUsing", {}), calls)
+
+    def test_the_body_always_has_something_worth_working_toward(self):
+        from src.levels.l8_agency.mc_knowledge import ModpackIndex
+        self._image_bridge()
+        s = self.game.skills
+        s.index = ModpackIndex(None)
+        bag = {"minecraft:iron_pickaxe": 1}
+        s.crafter.counts = lambda: dict(bag)
+        self.game._rpc = lambda m, p=None, timeout=5.0: {"chest": {"id": "minecraft:iron_chestplate"}} if m == "player.getEquipment" else {}
+        self.assertEqual(self.game.pick_goal(clock.now()), "minecraft:stone_axe")          # iron beats a stone pickaxe
+        self.assertEqual(s.goal_by, "auto")
+        s.set_goal("minecraft:diamond_sword", 1, "self")                                    # her own choice holds
+        self.assertEqual(self.game.pick_goal(clock.now()), "minecraft:diamond_sword")
+        s.goal_stuck, s.goal_note = True, "缺钻石"                                          # stuck: set aside for a while
+        self.assertEqual(self.game.pick_goal(clock.now()), "minecraft:stone_axe")
+        self.assertIn("minecraft:diamond_sword", self.game.shelved)
+        bag["minecraft:stone_axe"] = 1
+        self.assertEqual(self.game.pick_goal(clock.now()), "minecraft:stone_sword")
+        names = {t["function"]["name"] for t in self.gw.toolbox.specs(ToolContext("self", "乃爱", None, origin="game"))}
+        self.assertTrue({"mc_know", "mc_goal"} <= names)
 
     def test_chat_events_are_parsed(self):
         text = json.dumps({"messages": [
@@ -392,10 +453,50 @@ class TestMcpfabric(unittest.TestCase):
         self.gw.metabolism.energy = 90
         self.gw.metabolism.is_sleeping = False
         t = clock.now()
-        self.game.last_play = t - 60
-        self.assertFalse(self.game.play_due(t))                              # alone: every few minutes
+        self.game.last_play = t - 5
+        self.assertFalse(self.game.play_due(t))                              # alone: once a minute
+        self.game.last_play = t - 70
+        self.assertTrue(self.game.play_due(t))                               # a quiet minute: time for a turn
+        self.game.last_play = t - 13
+        self.assertFalse(self.game.play_due(t))
         self.game.people_near = 2
-        self.assertTrue(self.game.play_due(t))                               # with company: much more often
+        self.assertFalse(self.game.play_due(t))                              # presence alone is not an event
+        self.game.wake("附近玩家说话了")
+        self.assertTrue(self.game.play_due(t + 3))                            # debounce then react
+        self.game.people_near = 0
+        self.game.remember("我在 Minecraft 里做成了 铁镐")                     # something happened: a turn right now
+        self.assertTrue(self.game.play_due(t + 3))
+        self.assertIn("铁镐", self.game.wake_reason)
+
+    def test_empty_turns_do_not_delay_the_twenty_second_heartbeat(self):
+        self.game.connected = True
+        self.gw.metabolism.energy = 90
+        self.gw.metabolism.is_sleeping = False
+        t = clock.now()
+        self.game.last_chat = t - 1000                                       # nobody talked: alone
+        self.game.people_near, self.game.danger = 0, 99.0
+        self.game.journal = [{"t": t, "note": "stretched", "tools": []},
+                             {"t": t, "note": "stretched too", "tools": []}]
+        gap = self.game.play_gap
+        self.game.last_play = t - gap * 1.5
+        self.assertTrue(self.game.play_due(t))                               # heartbeat remains twenty seconds
+        self.game.last_play = t - gap * 2.5
+        self.assertTrue(self.game.play_due(t))
+        self.game.journal[0]["tools"] = ["mc_skill"]                         # a tool use resets the widening
+        self.game.last_play = t - gap * 1.5
+        self.assertTrue(self.game.play_due(t))
+        self.game.journal[0]["tools"] = []
+        self.game.people_near = 2                                            # company resets it too
+        self.game.last_play = t - self.game.company_gap * 1.5
+        self.assertFalse(self.game.play_due(t))                              # no event, not yet twenty seconds
+
+    def test_the_cadence_defaults_are_part_of_the_token_diet(self):
+        game = GameBridge(self.gw, "Noa", names=("乃爱",), poll_seconds=0, play_per_hour=600)
+        self.assertEqual(self.game.play_gap, 20.0)
+        self.assertEqual(self.game.company_gap, 8.0)
+        self.assertEqual(self.game.play_steps, 2)
+        self.assertEqual(self.game.play_per_hour, 240)
+        self.assertEqual(game.play_per_hour, GameBridge.PLAY_PER_HOUR_MAX)
 
     def test_someone_talking_interrupts_her_own_turn(self):
         self.game.interrupt = True
@@ -443,7 +544,8 @@ class TestMcpfabric(unittest.TestCase):
         # the runtime's own memory, goal tree, map and container tools would be a second mind: not hers
         for second_mind in ("agent_brief", "observe", "map_view", "remember", "goal_add", "open_container"):
             self.assertFalse(access.allowed(cfg, access.OWNER, second_mind), second_mind)
-        self.assertIn("job_status", GameBridge.PLAY_PROMPT)
+        self.assertNotIn("job_status", GameBridge.PLAY_PROMPT)
+        self.assertIn("mc_plan", GameBridge.PLAY_PROMPT)
 
     def test_what_she_just_did_is_in_the_scene_of_her_next_turn(self):
         self.game.journal = [{"t": clock.now(), "note": "我在 Minecraft 里自己玩了一会儿（2 步：mc_skill、get_self）",
@@ -454,7 +556,7 @@ class TestMcpfabric(unittest.TestCase):
 
     def test_tool_markup_never_reaches_what_she_says(self):
         raw = '好呀\n<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="mc_craft">\n</｜｜DSML｜｜ calls>'
-        self.assertEqual(self.gw._finalize_response(raw), "好呀")
+        self.assertEqual(self.gw._finalize_response(raw), "")  # truncated payload is withheld as a whole
 
     def _rejoin_bridge(self):
         """A stand-in for the mod bridge: disconnected to start with, joined again on session.join."""
@@ -559,6 +661,26 @@ class TestMcpfabric(unittest.TestCase):
         import io
         shrunk = shrink_png(tiny_png(1600, 900), 640)       # a 4K game frame does not go to the model at 4K
         self.assertEqual(Image.open(io.BytesIO(shrunk)).width, 640)
+        cut = Image.open(io.BytesIO(shrink_png(tiny_png(1600, 1000), 800, 0.13)))   # the hotbar strip is cut off
+        self.assertEqual((cut.width, cut.height), (800, 435))
+
+    def test_the_exact_half_of_her_eyes(self):
+        from src.levels.l8_agency.game import describe_view
+        rays = [{"row": r, "col": c, "hit": r >= 2, "id": "minecraft:stone" if c < 3 else "minecraft:coal_ore",
+                 "distance": 2.0 + c} for r in range(5) for c in range(9)]
+        scene = {"lookingAt": {"type": "block", "id": "minecraft:coal_ore", "pos": {"x": 1, "y": 60, "z": 2}}, "rays": rays,
+                 "entities": [{"type": "minecraft:zombie", "distance": 7.4}]}
+        gear = {"mainHand": {"id": "minecraft:iron_pickaxe", "name": "铁镐", "count": 1, "damage": 120, "maxDamage": 250},
+                "offHand": {"id": "minecraft:torch", "name": "火把", "count": 14}, "helmet": {"empty": True}}
+        text = describe_view(scene, gear)
+        self.assertIn("手上：铁镐（耐久 130/250）；副手：火把×14；护甲：没穿", text)
+        self.assertIn("准星对着：coal_ore（1,60,2）", text)
+        self.assertIn("上左 空", text)
+        self.assertIn("平左 stone 2.0格", text)
+        self.assertIn("下中 coal_ore 5格", text)
+        self.assertIn("zombie 7格", text)
+        self.assertIn("远处/天空", describe_view({"lookingAt": {"type": "miss"}}, None))
+        self.assertEqual(describe_view({}, None), "")
 
     def test_her_own_turns_come_with_eyes(self):
         self._image_bridge()
@@ -581,7 +703,7 @@ class TestMcpfabric(unittest.TestCase):
         self.gw.inference_engine = engine
         prompt = "<|im_start|>system\nS<|im_end|>\n<|im_start|>user\nU<|im_end|>\n<|im_start|>assistant\n"
         out = asyncio.run(self.gw._respond_native(prompt, "", {"max_tokens": 40}, None,
-                                                  ToolContext("self", "乃爱", origin="game")))
+                                                  ToolContext("mc:Steve", "Steve", "mc", origin="reply")))
         self.assertIn("看到了", out)
         self.assertTrue(any(isinstance(m.get("content"), list)
                             and any(b.get("type") == "image_url" for b in m["content"])
@@ -599,6 +721,69 @@ class TestMcpfabric(unittest.TestCase):
         self.assertIn("browser_navigate", owner_names)
         self.assertIn("mc_look", game_names)
         self.assertIn("mc_skill", game_names)
+
+    def test_a_game_turn_only_carries_the_tools_playing_needs(self):
+        self.gw.mc_bridge = ("http://127.0.0.1:1", "t")     # the mod's own bridge: her mc_* tools are available
+        ctx = ToolContext("self", "乃爱", None, origin="game")
+        names = {s["function"]["name"] for s in self.gw.toolbox.specs(ctx)}
+        self.assertLessEqual(len(names), 30)                 # not the whole toolbox: a game turn comes often
+        self.assertTrue({"mc_know", "mc_goal", "mc_look", "mc_skill"} <= names)
+        self.assertLessEqual(names, GAME_TOOLS)
+        # browsing, files, code and the mod's own second mind are not part of playing
+        self.assertFalse({"read_webpage", "web_search", "run_python", "browser_navigate", "agent_brief",
+                          "mc_open_block", "mc_container_click"} & names)
+
+    def test_the_play_turn_does_not_say_every_tool_twice(self):
+        game_ctx = ToolContext("self", "乃爱", None, origin="game")
+        self.assertEqual(self.gw.toolbox.menu(game_ctx, True), "")          # the schemas already say it
+        self.assertIn("Action:", self.gw.toolbox.menu(game_ctx, False))     # text protocol: one line, still
+        self.assertEqual(len(self.gw.toolbox.menu(game_ctx, False).splitlines()), 1)
+
+    def test_the_eyes_look_much_less_often(self):
+        self._image_bridge()
+        now = clock.now()
+        self.game.danger, self.game.health = 99.0, 20.0
+        self.game.last_shot = now - 30
+        self.assertIsNone(self.game.look())                  # 30s < 90s: no picture, no tokens
+        self.game.last_shot = now - 100
+        self.assertIsNotNone(self.game.look())               # a minute and a half: one look
+        self.assertGreaterEqual(GameBridge.LOOK_EVERY, 60)
+        self.assertGreaterEqual(GameBridge.DANGER_LOOK, 8)
+
+    def test_the_scene_reads_the_view_once_until_it_goes_stale(self):
+        calls = []
+
+        def rpc(method, params=None, timeout=5.0):
+            calls.append(method)
+            return {"lookingAt": {"type": "miss"}} if method == "vision.describeScene" else {}
+        self.game._rpc = rpc
+        self.game._scene()
+        self.game._scene()
+        self.assertEqual(calls.count("vision.describeScene"), 1)     # one read serves the next few turns
+        clock.get_clock().advance(25)
+        self.game._scene()
+        self.assertEqual(calls.count("vision.describeScene"), 2)
+
+    def test_a_play_turn_logs_what_it_cost(self):
+        usage = {"calls": 0, "prompt_tokens": 100, "completion_tokens": 10, "cache_hit_tokens": 40}
+        self.gw.inference_engine.usage = usage
+
+        async def fake_respond(prompt, emo, params, media, ctx):
+            usage["prompt_tokens"] += 1200
+            usage["completion_tokens"] += 30
+            usage["cache_hit_tokens"] += 900
+            return "（不说）"
+        self.gw._respond = fake_respond
+        with self.assertLogs("src.levels.l8_agency.game", level="INFO") as logs:
+            asyncio.run(self.game.play(clock.now()))
+        line = next(x for x in logs.output if "[Tokens]" in x)
+        self.assertIn("prompt=1200", line)
+        self.assertIn("completion=30", line)
+        self.assertIn("cache=900", line)
+        self.assertIn("tools=", line)
+        self.assertEqual(self.game.token_turns[-1]["prompt"], 1200)
+        self.assertEqual(self.game.status()["tokens"]["turns"], 1)
+        self.assertIn("平均", self.game.token_report())
 
     def test_in_danger_she_looks_much_more_often(self):
         self._image_bridge()
@@ -663,6 +848,10 @@ class TestMcpfabric(unittest.TestCase):
                 m = body["method"]
                 if m == "player.getState":
                     result = dict(state, motion={"x": 0, "y": 0, "z": 0})
+                elif m == "container.state":
+                    result = {"open": False}
+                elif m == "vision.describeScene":
+                    result = {"lookingAt": {"type": "none"}}
                 elif m == "perception.entities":
                     result = {"entities": entities or []}
                 elif m == "player.getInventory":
@@ -684,8 +873,9 @@ class TestMcpfabric(unittest.TestCase):
         return calls
 
     def test_she_eats_when_hurt_and_hungry(self):
+        inventory = {"hotbar": [{"slot": 5, "id": "minecraft:apple", "count": 1}], "main": []}
         calls = self._vitals_bridge({"health": 12.0, "food": 8, "x": 10.0, "y": 64.0, "z": -3.0},
-                                    inventory={"hotbar": [{"slot": 5, "id": "minecraft:apple", "count": 1}]})
+                                    inventory=inventory)
         self.game.connected, self.game.in_world = True, True
         self.game.health, self.game.food = 12.0, 8.0
         self.game.last_eat = 0
@@ -696,8 +886,12 @@ class TestMcpfabric(unittest.TestCase):
         self.assertIn("control.startUsing", methods)
         self.assertEqual([p for m, p in calls if m == "inventory.selectHotbar"], [{"slot": 5}])
         self.assertEqual(self.game.survive(now + 2.2), "eating")     # still holding the food
-        self.assertIn("control.stopUsing", [m for m, _ in calls])
-        self.assertEqual(self.game.last_eat, now + 2.2)
+        self.assertEqual(sum(m == "control.stopUsing" for m, _ in calls), 1)  # only preflight release
+        inventory["hotbar"][0]["count"] = 0                         # server confirms consumption later
+        self.assertEqual(self.game.survive(now + 5), "eating")
+        self.assertEqual(sum(m == "control.stopUsing" for m, _ in calls), 2)
+        self.assertEqual(self.game.last_eat, now + 5)
+        self.assertEqual(self.game.last_eat_result["consumed"], 1)
 
     def test_she_hits_a_hostile_that_gets_close(self):
         calls = self._vitals_bridge({"health": 18.0, "food": 18, "x": 10.0, "y": 64.0, "z": -3.0, "onGround": True})
@@ -864,20 +1058,72 @@ class TestMcpfabric(unittest.TestCase):
         log = open(calls_log, encoding="utf-8").read()
         self.assertIn("job_cancel", log)
 
+    def test_trapped_twice_she_climbs_out_instead_of_retrying_forever(self):
+        self._bridge([])
+        self.game.connected = True
+        self.game.last_moved = clock.now() - 60
+        self.game.last_sched = 0
+        calls_log = os.path.join(self.dir, "calls.log")
+
+        def running():                                      # a job is running until she cancels it
+            return not (os.path.exists(calls_log) and "job_cancel" in open(calls_log, encoding="utf-8").read())
+        self.game.job_running = running
+        started = []
+        self.game.skills.start = lambda name, **kw: started.append((name, kw)) or f"开始做 {name} 了"
+        self.assertEqual(asyncio.run(self.game.auto_work(clock.now())), "mc_skill")
+        self.assertEqual(self.game.stuck_cancels, 1)        # one stuck job: replace it
+        self.game.job_running = lambda: True                # and the replacement gets stuck too
+        out = asyncio.run(self.game.auto_work(clock.now() + 30))
+        self.assertEqual(out, "escape")                     # two in a row: she is trapped, climb out
+        self.assertEqual(self.game.stuck_cancels, 0)
+        self.assertIn(("escape", {}), started)
+        self.assertIn("job_cancel", open(calls_log, encoding="utf-8").read())
+
+    def test_underground_idle_uses_planner_instead_of_blind_escape(self):
+        self._bridge([])
+        self.game.connected = True
+        self.game.last_moved = clock.now() - 60
+        self.game.last_sched = 0
+        self.game.job_running = lambda: False
+        self.game.sky_above = lambda: False                 # a cave roof over her head
+        started = []
+        self.game.skills.start = lambda name, **kw: started.append((name, kw)) or f"开始做 {name} 了"
+        self.assertEqual(asyncio.run(self.game.auto_work(clock.now())), "mc_skill")
+        self.assertTrue(started)
+        self.assertNotIn(("escape", {}), started)
+
+    def test_recent_motion_does_not_trigger_blind_escape_for_stuck_goal(self):
+        self._bridge([])
+        self.game.connected = True
+        self.game.last_moved = clock.now() - 1               # shuffling around in a cave, not making progress
+        self.game.last_sched = 0
+        self.game.job_running = lambda: False
+        self.game.sky_above = lambda: False
+        self.game.skills.goal_stuck = True
+        started = []
+        self.game.skills.start = lambda name, **kw: started.append((name, kw)) or f"开始做 {name} 了"
+        self.assertEqual(asyncio.run(self.game.auto_work(clock.now())), "")
+        self.assertTrue(self.game.skills.goal_stuck)
+        self.assertEqual(started, [])
+
+    def test_open_sky_means_no_escape_needed(self):
+        self._action_bridge()                                # a world of air
+        self.assertTrue(self.game.sky_above())
+
     def test_a_second_look_right_after_the_first_is_not_taken(self):
         self._image_bridge()
-        self.assertEqual(self.game.look_now(), "看到了，画面已经拿到。")
+        self.assertTrue(self.game.look_now().startswith("看到了，画面已经拿到。"))
         self.assertIn("刚看过", self.game.look_now())
 
-    def test_mc_skill_does_not_start_another_action_while_a_job_runs(self):
+    def test_mc_skill_dispatches_to_the_single_skill_queue(self):
         self._bridge([])
         self.game.job_running = lambda: True
         started = []
         self.game.skills.start = lambda name, **kw: started.append(name) or "开始"
         out = asyncio.run(self.gw.toolbox.run("mc_skill", {"name": "chop_tree"},
                                               ToolContext("mc:Steve", "Steve", "mc")))
-        self.assertIn("后台任务", out)
-        self.assertEqual(started, [])
+        self.assertIn("开始", out)
+        self.assertEqual(started, ["chop_tree"])
 
     def test_she_stays_with_a_friend_who_is_talking_instead_of_wandering_off(self):
         steve = GameBridge.offline_uuid("Steve")
@@ -901,6 +1147,22 @@ class TestMcpfabric(unittest.TestCase):
         self.game.last_moved = clock.now() - 60
         self.game.last_sched = clock.now()                  # just started something
         self.assertEqual(asyncio.run(self.game.auto_work(clock.now())), "")
+
+    def test_confirmed_skill_completion_hands_off_after_two_seconds(self):
+        self._bridge([])
+        now = clock.now()
+        self.game.connected = True
+        self.game.job_running = lambda: False
+        self.game.last_moved = now - 3
+        self.game.last_sched = now - 3
+        started = []
+        self.game.skills.start = lambda name, **kw: started.append(name) or f"开始做 {name} 了"
+        self.game._completed_action("mine", {}, "挖了 2 块。")
+        self.assertEqual(asyncio.run(self.game.auto_work(now + 1)), "")
+        self.assertEqual(asyncio.run(self.game.auto_work(now + 2.1)), "mc_skill")
+        self.assertEqual(len(started), 1)
+        self.game._completed_action("mine", {}, "走不到矿石。")
+        self.assertEqual(asyncio.run(self.game.auto_work(now + 3)), "")
 
 
 if __name__ == "__main__":

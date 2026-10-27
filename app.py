@@ -253,6 +253,9 @@ if vision_engine is None:
     _remote = getattr(inference_engine, "remote", None)
     vision_engine = _remote if getattr(_remote, "supports_images", False) else None
 senses.caption_engine = vision_engine
+# 听觉（Whisper，scripts/senses/hear_server.py）跟着她一起启动，挂了会自己再拉起来；HEAR_AUTOSTART=false 关掉
+senses.configure_hearing(os.path.dirname(os.path.abspath(__file__)), python=config.get('HEAR_PYTHON') or "",
+                         enabled=bool(config.get('HEAR_AUTOSTART', True)))
 
 # Initialize Level 1-10 Framework
 event_bus = EventBus()
@@ -279,7 +282,8 @@ from src.core.backup import BackupManager
 global_workspace.backup = BackupManager(global_workspace.memory.db.db_path,
                                         keep_daily=int(config.get("BACKUP_KEEP_DAILY", 7)),
                                         keep_weekly=int(config.get("BACKUP_KEEP_WEEKLY", 4)),
-                                        extra_dirs=[config.get("BACKUP_DIR_2")])
+                                        extra_dirs=[config.get("BACKUP_DIR_2")],
+                                        file_dirs=[global_workspace.keepsakes.folder])   # her room's files
 global_workspace.qq = qq   # her tools read group history / member info through it
 
 # The person who looks after her hears her requests to the maintainer (works with the evolve channel off)
@@ -796,8 +800,9 @@ async def proactive_sender_loop():
             
             # Tick consciousness
             await global_workspace.tick()
-            if time.time() - last_sense_check > 300:          # which senses does she have right now?
-                last_sense_check = time.time()
+            if time.time() - last_sense_check > (300 if global_workspace.abilities.get("hear") else 60):
+                last_sense_check = time.time()                # which senses does she have right now?
+                await asyncio.to_thread(senses.ensure_hearing)   # (re)start hearing if it is down
                 health = await asyncio.to_thread(senses.health)
                 # A DeepSeek engine that looks at pictures means she can see, even with no local vision server
                 health["see"] = health.get("see", False) or senses.can_describe()
@@ -866,6 +871,7 @@ async def shutdown_handler():
     global_workspace._save_state("shutdown")
     if getattr(global_workspace, "mcp", None):
         global_workspace.mcp.stop_all()
+    senses.stop_hearing()
     global_workspace.memory.flush()
     if hasattr(global_workspace.inference_engine, "usage_summary"):
         logger.info(f"[DeepSeek] 本次运行用量：{global_workspace.inference_engine.usage_summary()}")

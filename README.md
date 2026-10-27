@@ -7,7 +7,7 @@
 
 [![license](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.11%2B-3776ab.svg)](#快速开始)
-[![tests](https://img.shields.io/badge/tests-416%20passing-brightgreen.svg)](minimal-self/tests)
+[![tests](https://img.shields.io/badge/tests-789%20passing-brightgreen.svg)](minimal-self/tests)
 [![CI](https://github.com/kerstker/nested-observer-architecture/actions/workflows/tests.yml/badge.svg)](https://github.com/kerstker/nested-observer-architecture/actions/workflows/tests.yml)
 
 > 开源的目的一句话：**架构可以借**。
@@ -18,7 +18,7 @@
 
 ## 为什么值得读
 
-1. **分层，但不是状态机。** L1–L10 每一层都能单独测试（416 个测试，无网络、无 API Key 也能跑）；
+1. **分层，但不是状态机。** L1–L10 每一层都能单独测试（789 个测试，无网络、无 API Key 也能跑）；
    L10 的 `global_workspace.py` 只做编排，不偷偷实现业务。
 2. **注意力是一个"槽位"，不是全量拼接。** 每个输入先变成候选刺激，按显著度竞争同一个工作区；
    赢的那个才进入这一轮意识。这是她和"把所有上下文塞进 prompt"的机器人在行为上分道扬镳的地方。
@@ -89,7 +89,7 @@
 | 层 | 名字 | 实现 | 做什么 |
 |---|---|---|---|
 | **L1** | 感知 | `l1_perception/` | 痛/触摸/喂食/洗澡的文字判定、昼夜天气、群语料、表情库、**文件→文字**（txt/代码/csv/json/html/pdf/docx/xlsx/pptx/epub/rtf/zip…） |
-| **L2** | 记忆 | `l2_memory/` | 本地 embedding（bge-small-zh ONNX + 字符 n-gram 混合）、情节记忆、语义事实、人物画像、对话时间线、**人/事/物关系图**（带"谁说的"） |
+| **L2** | 记忆 | `l2_memory/` | 本地 embedding（bge-small-zh ONNX + 字符 n-gram 混合）、情节记忆、语义事实、人物画像、对话时间线、**人/事/物关系图**（带"谁说的"）、**她自己的小屋**（她决定收下的原图/文件/摘记/链接） |
 | **L3** | 代谢 | `l3_metabolism/` | 精力、睡眠恢复 |
 | **L4** | 情绪 | `l4_emotion/` | 六种基础情绪 + 对立压制 + 习惯化 + 睡眠安抚 + 心境 |
 | **L5** | 价值 | `l5_value/` | 七个价值（尊严/真诚/亲近/好奇/自主/安稳/公平），决定冲突、生气、拒绝；价值本身会缓慢变化 |
@@ -97,7 +97,7 @@
 | **L7** | 心智理论 | `l7_tom/` | 关键词情绪、**潜台词**、每个人的回复习惯与预测误差、传闻与敏感信息 |
 | **L8** | 行动 | `l8_agency/` | 工具箱、**权限**、**防火墙**、MCP 集线器、Minecraft 身体、需要→行动（Q 值学习）、目标、承诺过的事 |
 | **L9** | 叙事 | `l9_narrative/` | 日记/自传/事实/梗的整理、**人格漂移**（每天 ≤±0.05，带证据）、说话范例库 |
-| **L10** | 意识 | `l10_consciousness/` | **全局工作空间**（总编排）、注意力图式、元认知与校准 |
+| **L10** | 意识 | `l10_consciousness/` | **全局工作空间**（总编排）、注意力图式、元认知与校准、**只读自省窗口**（自己的代码/记忆库/进程/日志） |
 | **L17** | 自我改进 | `l17_self_improvement/` | 自诊断、行为适应度评估、**维护请求通道**、改造提案（在副本里改 + 跑测试 + 行为评估） |
 | **L18/L19** | 知识/搜索 | `l18_knowledge/`, `l19_search/` | 知识库、三级回退搜索（失败就明说没查到） |
 
@@ -112,7 +112,7 @@ MCP 工具在启动时向服务器查询，动态挂进工具箱。
 |---|---|---|
 | 创造者（私聊/控制台） | `owner` | 全部（除明确 deny）：浏览器全套、读写文件、`run_python`、上传文件 |
 | `MCP_TRUSTED_USERS`（私聊） | `trusted` | 浏览器：看 + 输入 + 填表 |
-| 她自己的空闲时间 / 游戏自玩 | `autonomous` | 浏览器：看 + 往搜索框输入；只有查资料和记笔记的内置工具 |
+| 她自己的空闲时间 / 游戏自玩 | `autonomous` | 浏览器：看 + 往搜索框输入；查资料、记笔记、整理自己的小屋、只读地看自己 |
 | 游戏聊天里的人（`MC_TRUSTED_PLAYERS`） | `player` | 只有游戏工具 |
 | 其他人和所有群 | `public` | 只能看页面（每人每天 12 次、总共 50 次）；不能输入 / 读文件 / 跑代码 |
 
@@ -200,12 +200,12 @@ python -m pytest -q
 |---|---|
 | `app.py` | 入口：配置、引擎、全局工作空间装配、MCP/游戏/防火墙、消息处理器、心跳、关机 |
 | `napcat/` | QQ 适配层（OneBot 11 / NapCat）+ 文件取回 + 视听 |
-| `console/` | 网页控制台（7 个标签）与 API |
+| `console/` | 网页控制台（8 个标签，含「她的小屋」）与 API |
 | `minimal-self/src/core/` | 时钟（可模拟）、事件总线、工作区、状态快照、备份 |
 | `minimal-self/src/levels/l1…l10` | 感知/记忆/代谢/情绪/价值/稳态/ToM/行动/叙事/意识 |
 | `minimal-self/src/levels/l17…l19` | 自我改进（含维护请求）、知识库、搜索 |
 | `minimal-self/src/evaluation/` | 15 个行为场景与仿真器（脚本化时钟：一周几分钟跑完） |
-| `minimal-self/tests/` | 416 个测试（含假 MCP / 假游戏服务器） |
+| `minimal-self/tests/` | 789 个测试（含假 MCP / 假游戏服务器） |
 | `scripts/` | 维护请求、评估审计、改造提案、备份恢复、感知服务 |
 | `docs/` | 架构文档 + 四张由脚本生成的 SVG |
 | `AGENTS.md` | 给维护智能体的工作协议（人机协作的接口约定） |
@@ -214,7 +214,7 @@ python -m pytest -q
 
 | 工具 | 测什么 |
 |---|---|
-| `minimal-self/tests`（416 个） | 行为、记忆、情绪、工具权限、防火墙（含真实跑脚本）、文档解析、游戏、维护通道… |
+| `minimal-self/tests`（789 个） | 行为、记忆、情绪、工具权限、防火墙（含真实跑脚本）、文档解析、游戏、维护通道… |
 | `scripts/evaluate_life.py` | 15 个行为场景（脚本化模型，测机制） |
 | `scripts/evaluate_quality.py` | 真实模型 + 真实记忆副本，评审打分（自然 / 符合预期 / 诚实） |
 | `scripts/audit_tone.py` | 情商：重放真实消息，评审打 EQ / 带刺 / 个性，前后对比 |
@@ -232,7 +232,8 @@ python -m pytest -q
 5. 防火墙是防护栏不是沙箱；注入识别只在测试里验证过，线上还没碰到真实恶意页面。
 6. 潜台词读取只覆盖约 5% 的消息；情商整体 3.93/5，还有"质问对方"类回复。
 7. 漫游和游戏自玩在线上没有真正触发过（只在测试里跑通）。
-8. 图片随消息交给模型看（引擎支持时），OCR 始终可用；本地视觉服务已停用。
+8. 图片随消息交给模型看（引擎支持时），长截图按从上到下切成几段再给，字不会被压糊；OCR 始终可用；本地视觉服务已停用。
+9. 听觉（本机 Whisper）随 `app.py` 自动启动、挂了会重拉；没装 `.venv-lora` 和模型时她如实说听不了。
 
 更完整、随代码更新的版本见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 

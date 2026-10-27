@@ -322,8 +322,16 @@ class QQ:
         for seg in segments or []:
             if not isinstance(seg, dict) or seg.get("type") != "image":
                 continue
-            picture = await asyncio.to_thread(self.senses.fetch_image, seg.get("data") or {})
+            d = dict(seg.get("data") or {})
+            picture = await asyncio.to_thread(self.senses.fetch_image, d)
+            if not picture and d.get("file"):
+                # The URL has expired or will not download: NapCat can still give the picture as a local file
+                got = await self.call("get_image", {"file": d.get("file")}, timeout=20) or {}
+                if got.get("file"):
+                    picture = await asyncio.to_thread(self.senses.fetch_image, {"path": got["file"]})
             if picture:
+                picture["name"] = str(d.get("file") or "")[:80]
+                picture["sticker"] = str(d.get("sub_type", "0")) != "0"
                 pictures.append(picture)
             if len(pictures) >= limit:
                 break

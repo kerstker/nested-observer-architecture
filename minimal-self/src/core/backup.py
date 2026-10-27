@@ -43,8 +43,9 @@ def _parse(name: str) -> Optional[float]:
 
 class BackupManager:
     def __init__(self, db_path: str, folder: str = None, keep_daily: int = 7, keep_weekly: int = 4,
-                 interval: float = 24 * 3600, extra_dirs: Iterable[str] = ()):
+                 interval: float = 24 * 3600, extra_dirs: Iterable[str] = (), file_dirs: Iterable[str] = ()):
         self.db_path = os.path.abspath(db_path)
+        self.file_dirs = [os.path.abspath(d) for d in file_dirs if d]
         self.folder = os.path.abspath(folder or os.path.join(os.path.dirname(self.db_path), "backups"))
         self.keep_daily, self.keep_weekly, self.interval = keep_daily, keep_weekly, interval
         self.extra_dirs = [os.path.abspath(d) for d in extra_dirs if d]
@@ -174,6 +175,7 @@ class BackupManager:
             os.replace(tmp, final)
             tmp = None
             result["copies"] = self._copy_elsewhere(final)
+            result["files"] = self.mirror_files()
             result["removed"] = self.rotate(now)
             result["ok"] = True
             logger.info(f"[Backup] {name} ({result['bytes'] // 1024} KB), checked; kept {len(self.list())}"
@@ -192,6 +194,30 @@ class BackupManager:
 
     def run_if_due(self, now: float = None) -> Optional[Dict[str, Any]]:
         return self.run(now) if self.due(now) else None
+
+    def mirror_files(self) -> int:
+        """Folders of files her database points at (her keepsakes) are mirrored into <backups>/<name>/ and every
+        extra dir: new files are copied, nothing is ever deleted there (names are content hashes, so a file
+        never changes). Returns how many files were copied this time."""
+        copied = 0
+        for src in self.file_dirs:
+            if not os.path.isdir(src):
+                continue
+            for dest_root in [self.folder] + self.extra_dirs:
+                dest = os.path.join(dest_root, os.path.basename(src.rstrip("\\/")))
+                try:
+                    os.makedirs(dest, exist_ok=True)
+                    have = set(os.listdir(dest))
+                    for name in os.listdir(src):
+                        p = os.path.join(src, name)
+                        if name in have or name.endswith(".partial") or not os.path.isfile(p):
+                            continue
+                        shutil.copy2(p, os.path.join(dest, name + ".partial"))
+                        os.replace(os.path.join(dest, name + ".partial"), os.path.join(dest, name))
+                        copied += 1
+                except OSError as e:
+                    logger.error(f"[Backup] mirroring {src} to {dest} failed: {e}")
+        return copied
 
     def _copy_elsewhere(self, path: str) -> int:
         done = 0

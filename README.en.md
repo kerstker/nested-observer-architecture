@@ -22,7 +22,7 @@ living inside a QQ account.
 ## Why it is worth reading
 
 1. **Layered, but not a state machine.** Every level in L1–L10 is testable on its own
-   (416 tests, no network, no API key). L10's `global_workspace.py` only orchestrates.
+   (789 tests, no network, no API key). L10's `global_workspace.py` only orchestrates.
 2. **Attention is a slot, not a concatenation.** Inputs become candidate stimuli that compete for the
    same workspace; only the winner enters this round of consciousness. This is where her behaviour
    diverges from "stuff every context into one prompt".
@@ -72,7 +72,7 @@ drift limited to ±0.05/day, self-diagnosis → maintenance requests).
 | Level | Name | What it does |
 |---|---|---|
 | L1 | Perception | touch/pain/feeding, day-night, group slang, stickers, **documents → text** (pdf/docx/xlsx/pptx/epub/zip/…) |
-| L2 | Memory | local bge-small-zh ONNX + char n-gram embeddings, episodes, semantic facts, person profiles, chat timeline, **relation graph with provenance** |
+| L2 | Memory | local bge-small-zh ONNX + char n-gram embeddings, episodes, semantic facts, person profiles, chat timeline, **relation graph with provenance**, **her own room** (originals of pictures/files, notes and links she chose to keep) |
 | L3 | Metabolism | energy, sleep recovery |
 | L4 | Emotion | six basic emotions, opposition, habituation, sleep soothing, mood |
 | L5 | Values | seven values (dignity/sincerity/closeness/curiosity/autonomy/stability/fairness); conflicts, anger, refusal |
@@ -80,7 +80,7 @@ drift limited to ±0.05/day, self-diagnosis → maintenance requests).
 | L7 | Theory of mind | emotion keywords, **subtext reading**, per-person reply-habit models, hearsay and sensitive claims |
 | L8 | Agency | toolbox, **access tiers**, **firewall**, MCP hub, Minecraft body, drives with Q-learning, goals, promises |
 | L9 | Narrative | diary/autobiography, **personality drift** (evidence-bound), speech anchors |
-| L10 | Consciousness | **global workspace** orchestration, attention schema, metacognition and calibration |
+| L10 | Consciousness | **global workspace** orchestration, attention schema, metacognition and calibration, **a read-only window into herself** (her code, memory database, process, log) |
 | L17 | Self-improvement | diagnosis, fitness evaluation, **maintainer requests**, evolve proposals on a copy |
 | L18/19 | Knowledge/search | knowledge base, three-tier web search that admits failure |
 
@@ -154,12 +154,12 @@ python -m pytest -q
 |---|---|
 | `app.py` | entry point: config, engines, workspace wiring, MCP/game/firewall, message handlers, heartbeat, shutdown |
 | `napcat/` | QQ adapter (OneBot 11 / NapCat), file fetching, senses |
-| `console/` | web console (7 tabs) and its API |
+| `console/` | web console (8 tabs, including her room) and its API |
 | `minimal-self/src/core/` | simulated clock, event bus, workspace, state snapshots, backups |
 | `minimal-self/src/levels/l1…l10` | perception, memory, metabolism, emotion, values, homeostasis, ToM, agency, narrative, consciousness |
 | `minimal-self/src/levels/l17…l19` | self-improvement (maintenance requests), knowledge base, search |
 | `minimal-self/src/evaluation/` | 15 behavioural scenarios and a simulator (a simulated week runs in minutes) |
-| `minimal-self/tests/` | 416 tests, including fake MCP and fake game servers |
+| `minimal-self/tests/` | 789 tests, including fake MCP and fake game servers |
 | `scripts/` | maintenance requests, audits, evolve proposals, backup/restore, sense servers |
 | `docs/` | architecture document and four generated SVGs |
 | `AGENTS.md` | working protocol for the maintenance agent |

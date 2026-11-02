@@ -1,0 +1,39 @@
+{
+  "date": "2026-11-02",
+  "public_suite": {
+    "passed": 867,
+    "skipped": 1,
+    "seconds": 497.01,
+    "skip": "optional local ONNX embedding model unavailable"
+  },
+  "development_suite": {
+    "passed": 1162,
+    "skipped": 0,
+    "seconds": 510.52
+  },
+  "final_focused_suite": {
+    "passed": 37,
+    "scope": "research integration + following sleep/clock tests"
+  },
+  "ordering_note": "Public full run began before final report-history compaction; final focused run and development full run cover that compaction.",
+  "new_tests": 25,
+  "concurrent_constraint_solves": {
+    "calls": 1000,
+    "failures": 0,
+    "workers": 8
+  },
+  "synthetic_diagnostic": "rhs-diagnostic-20261102.json",
+  "source_manifest": "rhs-source-manifest.json",
+  "limitations": [
+    "No general SOTA benchmark",
+    "No deployed-world causal evidence",
+    "No new base model or LoRA training",
+    "Outcome predictor models tool execution status, not task success",
+    "Prediction model does not control policy"
+  ],
+  "runtime": {
+    "app_restarted": false,
+    "live_config_modified": false,
+    "live_database_modified_by_maintenance": false
+  }
+}

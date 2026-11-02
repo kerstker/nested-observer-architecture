@@ -716,6 +716,14 @@ def _look_inside(gw, ctx: ToolContext, args):
     what = str(args.get("what") or "process").strip().lower()
     tier = access.tier_of(gw, ctx)
     private = tier in (access.OWNER, access.AUTONOMOUS)
+    if what == "reasoning":
+        if tier != access.OWNER:
+            return "推理评测记录只向创造者展示。"
+        # Keep the overview within the existing tool output cap. Full histories
+        # remain in the bounded model reports for offline diagnostics.
+        return json.dumps({"prediction": {k: v for k, v in gw.action_prediction.report().items() if k != "recent"},
+                           "reasoning": {k: v for k, v in gw.verified_reasoner.report().items() if k != "recent"}},
+                          ensure_ascii=False)
     if what in ("code", "代码"):
         return view.code(str(args.get("path") or ""), args.get("start") or 1, str(args.get("search") or ""))
     if what in ("data", "数据", "memory", "记忆"):
@@ -727,6 +735,12 @@ def _look_inside(gw, ctx: ToolContext, args):
         return view.logs(str(args.get("level") or ""), args.get("count") or 30)
     return view.process()
 
+def _solve_constraints(gw, ctx, args):
+    result = gw.verified_reasoner.solve(args.get("problem"), operations=args.get("operations", 20000),
+                                        scope=f"{ctx.user_id}:{ctx.group_id or ''}")
+    return json.dumps(result, ensure_ascii=False)
+
+
 def _owner(gw, ctx):
     return access.tier_of(gw, ctx) == access.OWNER
 
@@ -735,6 +749,12 @@ def _qq_ready(gw, ctx):
     return q is not None and q.connected()
 
 TOOLS: List[Tool] = [
+    Tool("solve_constraints", "求解有限整数约束，例如排程、组合、资源分配；只给满足已写约束且通过验证的答案。"
+         "不会执行排程或改文件。problem 含 variables（变量名到整数候选列表）与 constraints；"
+         "约束 op 为 sum_eq/sum_le/sum_ge（vars 和 value）或 all_different（vars）。最多12变量。",
+         _props(["problem"], problem={"type": "object", "description": "完整的有限整数约束问题"},
+                operations=_i("总操作预算，默认20000，上限100000")),
+         _solve_constraints, _owner, read_only=True),
     Tool("recall", "回忆：在我的经历、关于对方的记忆和知识库里找和 query 有关的内容。被问到以前的事、对方的事时先用它，而不是猜。",
          _props(["query"], query=_s("要回忆的内容，几个关键词")), _recall),
     Tool("who_is", "查我记下的某个人/宠物/东西/事情和别的人和事的关系（谁是谁的什么、谁说过什么、计划和近况），带来源。"
@@ -804,10 +824,10 @@ TOOLS: List[Tool] = [
          _props(["id"], id=_i("编号"), title=_s("新名字"), note=_s("新备注"), tags=_s("新标签"),
                 favorite={"type": "boolean", "description": "是不是最喜欢"},
                 forget={"type": "boolean", "description": "扔掉它"}), _change_keepsake, _room_ok),
-    Tool("look_inside", "看看自己身体里在发生什么（只读，什么都改不了）。what=process：我这个进程现在的状态（运行多久、内存、"
+    Tool("look_inside", "看看自己身体里在发生什么（只读，什么都改不了）。what=reasoning：行动预测与约束求解评测（仅创造者）；what=process：我这个进程现在的状态（运行多久、内存、"
          "感官和连接）；what=code：我自己的源代码（path 看文件夹或文件，start 从第几行看，search 找一个词）；"
          "what=data：我的记忆数据库（不给 table 看有哪些表，给 table 看最新几条）；what=logs：最近的运行日志。",
-         _props(["what"], what=_s("process / code / data / logs", enum=["process", "code", "data", "logs"]),
+         _props(["what"], what=_s("process / code / data / logs / reasoning", enum=["process", "code", "data", "logs", "reasoning"]),
                 path=_s("code：相对路径，比如 minimal-self/src/levels"), start=_i("code：从第几行开始"),
                 search=_s("code：要找的词"), table=_s("data：表名"), sql=_s("data：一条 SELECT（只有创造者在时）"),
                 count=_i("data/logs：看几条"), level=_s("logs：只看 WARNING 或 ERROR")),
@@ -821,6 +841,7 @@ ALIASES = {"recall": "recall", "memorize": "remember", "remember": "remember", "
            "fetch": "read_webpage", "schedule": "schedule_task", "schedule_task": "schedule_task", "remind": "schedule_task",
            "list_tasks": "list_tasks", "cancel_task": "cancel_task", "group_history": "group_history",
            "member_info": "member_info", "evolve": "evolve", "ask_maintainer": "ask_maintainer"}
+ALIASES["solve_constraints"] = "solve_constraints"
 
 _ACTION = re.compile(r"Action\s*[:：]\s*([A-Za-z_]+)[ \t]*(.*)")
 _KV = re.compile(r"""([A-Za-z_]+)\s*[=＝:：]\s*(?:"([^"]*)"|'([^']*)'|“([^”]*)”|「([^」]*)」|([^\s,，]+))""")
@@ -970,6 +991,9 @@ class Toolbox:
             return "直播弹幕只用于聊天，不能调用工具或执行操作。"
         tool = self._all().get(name)
         started = time.perf_counter()
+        observer = getattr(self.gw, "action_prediction", None)
+        prediction = observer.before_tool(self.gw, ctx, name) if observer else None
+        execution_status = "blocked"
         fw = getattr(self.gw, "firewall", None)
         tier = access.tier_of(self.gw, ctx)
         if tool is None or tool not in self.available(ctx):
@@ -995,13 +1019,16 @@ class Toolbox:
                 else:
                     result = await asyncio.wait_for(asyncio.to_thread(tool.handler, self.gw, ctx, args or {}),
                                                     timeout=limit or 25)
+                execution_status = "returned"
                 if tool.web:
                     ctx.tainted = True
             except asyncio.TimeoutError:
+                execution_status = "timeout"
                 result = f"{name} 超时了，没拿到结果。"
                 if tool.web:
                     ctx.tainted = True
             except Exception as e:
+                execution_status = "error"
                 result = f"{name} 出错了：{e}"
             if fw:
                 result = str(result or "")
@@ -1030,6 +1057,8 @@ class Toolbox:
             except Exception:
                 import logging
                 logging.getLogger(__name__).warning("[Game] game memory write failed", exc_info=True)
+        if observer:
+            observer.observe(prediction, execution_status)
         ctx.used.append(name)
         keep = getattr(self.gw, "_keep_for_console", None)
         if keep:

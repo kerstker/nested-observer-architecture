@@ -41,6 +41,8 @@ from ...levels.l8_agency.toolbox import Toolbox, ToolContext, parse_text_actions
 from .attention_schema import AttentionSchema
 from .self_view import SelfView
 from .metacognition import Metacognition
+from .action_prediction import ActionPrediction, ANSWER
+from ...levels.l8_agency.verified_reasoning import VerifiedReasoner
 from ...levels.l9_narrative.narrative import NarrativeSelf
 from ...levels.l9_narrative.style_anchors import StyleAnchors
 from ...levels.l7_tom.subtext import SubtextReader
@@ -137,6 +139,8 @@ class GlobalWorkspace:
         self.state_store = SelfStateStore(db_path)
         self.causes = CauseLog(db_path)
         self.self_model = SelfModel()
+        self.action_prediction = ActionPrediction()
+        self.verified_reasoner = VerifiedReasoner()
 
         # Predictive models of people, learned drives
         self.user_models = UserModelStore(db_path)
@@ -370,6 +374,7 @@ class GlobalWorkspace:
             "style_edge": self.style_edge,
             "attention": self.workspace.attention,
             "self_model": self.self_model.to_dict(),
+            "action_prediction": self.action_prediction.to_dict(),
             "attention_schema": self.attention_schema.to_dict(),
             "metacognition": self.metacog.to_dict(),
             "awakening": self.awakening,
@@ -420,6 +425,7 @@ class GlobalWorkspace:
         self.values.autonomy = snap.get("autonomy", self.values.autonomy)
         self.existential_anxiety = snap.get("existential_anxiety", 0.0) * 0.5 ** (gap / self.anxiety_half_life)
         self.self_model.load_dict(snap.get("self_model", {}))
+        self.action_prediction.load_dict(snap.get("action_prediction", {}))
         self.attention_schema.load_dict(snap.get("attention_schema", {}))
         self.metacog.load_dict(snap.get("metacognition", {}))
         self.style_edge = snap.get("style_edge", 0.0)
@@ -2619,6 +2625,17 @@ Response: [说出口的话]
                     and hasattr(self.inference_engine, "chat_tools"))
 
     async def _respond(self, prompt: str, emo_state: str, params: Dict[str, Any], media, ctx: ToolContext) -> str:
+        # Freeze the first-action forecast before the language model sees this turn.
+        # Keep it local: overlapping conversations must never overwrite one another.
+        prediction = self.action_prediction.before_decision(
+            self, ctx, [tool.name for tool in self.toolbox.available(ctx)])
+        offset = len(ctx.used)
+        response = await self._respond_impl(prompt, emo_state, params, media, ctx)
+        actual = ctx.used[offset] if len(ctx.used) > offset else ANSWER
+        self.action_prediction.observe(prediction, actual)
+        return response
+
+    async def _respond_impl(self, prompt: str, emo_state: str, params: Dict[str, Any], media, ctx: ToolContext) -> str:
         """Generate what she says, letting her use tools first. Returns the parsed response text."""
         if self._native_tools():
             try:

@@ -1,0 +1,350 @@
+{
+  "scope": "synthetic engineering diagnostic; NOT a SOTA or paper confirmation benchmark",
+  "tasks": 120,
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "families": 40,
+  "cold_accuracy": 1,
+  "warm_accuracy": 1,
+  "cold_mean_operations": 125.525,
+  "warm_mean_operations": 9,
+  "max_seconds": 0.00019350007642060518,
+  "exact_repeat_gate": {
+    "accepted": true,
+    "errors": [],
+    "regressions": [],
+    "families": 40,
+    "cost_delta_ci95": [
+      -121.99166666666667,
+      -110.725
+    ],
+    "accuracy_delta_ci95": [
+      0,
+      0
+    ],
+    "mean_cost_delta": -116.525,
+    "bootstrap_seed": 0,
+    "interpretation": "Fresh paired family-weighted empirical evidence; not a global optimality guarantee."
+  },
+  "synthetic_prediction": {
+    "mode": "observational",
+    "metrics": {
+      "action_world": {
+        "n": 600,
+        "log_loss": 0.7308756356941144,
+        "brier": 0.5093431202765584
+      },
+      "action_self": {
+        "n": 600,
+        "log_loss": 0.06114878289684884,
+        "brier": 0.011840313868680266
+      },
+      "outcome_world": {
+        "n": 600,
+        "log_loss": 0.7308756356941144,
+        "brier": 0.5093431202765584
+      },
+      "outcome_action": {
+        "n": 600,
+        "log_loss": 0.06114878289684884,
+        "brier": 0.011840313868680266
+      },
+      "outcome_self": {
+        "n": 600,
+        "log_loss": 0.06114878289684884,
+        "brier": 0.011840313868680266
+      }
+    },
+    "predictive_gain_bits": {
+      "body_to_action": 0.9662116092807878,
+      "action_to_outcome": 0.9662116092807878,
+      "body_to_outcome": 0.0
+    },
+    "recent": [
+      {
+        "kind": "action",
+        "actual": "rest",
+        "loss": {
+          "action_world": 0.7198154276421066,
+          "action_self": 0.029270382300113224
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "blocked",
+        "loss": {
+          "outcome_world": 0.7198154276421066,
+          "outcome_action": 0.029270382300113224,
+          "outcome_self": 0.029270382300113224
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "work",
+        "loss": {
+          "action_world": 0.7328875092094594,
+          "action_self": 0.029270382300113224
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "returned",
+        "loss": {
+          "outcome_world": 0.7328875092094594,
+          "outcome_action": 0.029270382300113224,
+          "outcome_self": 0.029270382300113224
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "rest",
+        "loss": {
+          "action_world": 0.719122666963206,
+          "action_self": 0.028987536873252298
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "blocked",
+        "loss": {
+          "outcome_world": 0.719122666963206,
+          "outcome_action": 0.028987536873252298,
+          "outcome_self": 0.028987536873252298
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "work",
+        "loss": {
+          "action_world": 0.7318616927406357,
+          "action_self": 0.028987536873252298
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "returned",
+        "loss": {
+          "outcome_world": 0.7318616927406357,
+          "outcome_action": 0.028987536873252298,
+          "outcome_self": 0.028987536873252298
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "rest",
+        "loss": {
+          "action_world": 0.7184649885442352,
+          "action_self": 0.028710105882431367
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "blocked",
+        "loss": {
+          "outcome_world": 0.7184649885442352,
+          "outcome_action": 0.028710105882431367,
+          "outcome_self": 0.028710105882431367
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "work",
+        "loss": {
+          "action_world": 0.7308875085427924,
+          "action_self": 0.028710105882431367
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "returned",
+        "loss": {
+          "outcome_world": 0.7308875085427924,
+          "outcome_action": 0.028710105882431367,
+          "outcome_self": 0.028710105882431367
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "rest",
+        "loss": {
+          "action_world": 0.7178397931503169,
+          "action_self": 0.028437935320533514
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "blocked",
+        "loss": {
+          "outcome_world": 0.7178397931503169,
+          "outcome_action": 0.028437935320533514,
+          "outcome_self": 0.028437935320533514
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "work",
+        "loss": {
+          "action_world": 0.7299611536826617,
+          "action_self": 0.028437935320533514
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "returned",
+        "loss": {
+          "outcome_world": 0.7299611536826617,
+          "outcome_action": 0.028437935320533514,
+          "outcome_self": 0.028437935320533514
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "rest",
+        "loss": {
+          "action_world": 0.7172447321390059,
+          "action_self": 0.028170876966696335
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "blocked",
+        "loss": {
+          "outcome_world": 0.7172447321390059,
+          "outcome_action": 0.028170876966696335,
+          "outcome_self": 0.028170876966696335
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "work",
+        "loss": {
+          "action_world": 0.7290791897860086,
+          "action_self": 0.028170876966696335
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "returned",
+        "loss": {
+          "outcome_world": 0.7290791897860086,
+          "outcome_action": 0.028170876966696335,
+          "outcome_self": 0.028170876966696335
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "rest",
+        "loss": {
+          "action_world": 0.7166776779701395,
+          "action_self": 0.0279087881170765
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "blocked",
+        "loss": {
+          "outcome_world": 0.7166776779701395,
+          "outcome_action": 0.0279087881170765,
+          "outcome_self": 0.0279087881170765
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "work",
+        "loss": {
+          "action_world": 0.7282385003712154,
+          "action_self": 0.0279087881170765
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "returned",
+        "loss": {
+          "outcome_world": 0.7282385003712154,
+          "outcome_action": 0.0279087881170765,
+          "outcome_self": 0.0279087881170765
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "rest",
+        "loss": {
+          "action_world": 0.716136698784644,
+          "action_self": 0.02765153133051001
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "blocked",
+        "loss": {
+          "outcome_world": 0.716136698784644,
+          "outcome_action": 0.02765153133051001,
+          "outcome_self": 0.02765153133051001
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "work",
+        "loss": {
+          "action_world": 0.7274362540385774,
+          "action_self": 0.02765153133051001
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "returned",
+        "loss": {
+          "outcome_world": 0.7274362540385774,
+          "outcome_action": 0.02765153133051001,
+          "outcome_self": 0.02765153133051001
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "rest",
+        "loss": {
+          "action_world": 0.7156200364120039,
+          "action_self": 0.027398974188114388
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "blocked",
+        "loss": {
+          "outcome_world": 0.7156200364120039,
+          "outcome_action": 0.027398974188114388,
+          "outcome_self": 0.027398974188114388
+        }
+      },
+      {
+        "kind": "action",
+        "actual": "work",
+        "loss": {
+          "action_world": 0.7266698725985888,
+          "action_self": 0.027398974188114388
+        }
+      },
+      {
+        "kind": "outcome",
+        "actual": "returned",
+        "loss": {
+          "outcome_world": 0.7266698725985888,
+          "outcome_action": 0.027398974188114388,
+          "outcome_self": 0.027398974188114388
+        }
+      }
+    ],
+    "causal_evidence": false,
+    "meaning": "First attempted tool per response; tool return status is not task success."
+  },
+  "not_measured": [
+    "human conversational quality",
+    "real tool task completion",
+    "body state causal necessity",
+    "LLM cost reduction",
+    "unseen task generalization"
+  ]
+}

@@ -44,6 +44,7 @@ class EmotionEngine:
         # Emotions return to neutral with time: each one halves every `half_life_seconds`.
         self.half_life_seconds = half_life_seconds
         self.last_decay = clock.now()
+        self.negative_decay_multiplier = 1.0
         # Temperament: the resting point emotions return to (set from personality; zero = neutral)
         self.baseline: Dict[str, float] = {}
         self.mood_valence = 0.0
@@ -88,6 +89,8 @@ class EmotionEngine:
             pace = self.half_life_seconds * self.HALF_LIFE_SCALE.get(f.name, 1.0)
             if asleep and f.name in NEGATIVE:
                 pace /= self.SLEEP_SOOTHING
+            if f.name in NEGATIVE:
+                pace /= self.negative_decay_multiplier
             factor = 0.5 ** (elapsed / pace)
             base = self.baseline.get(f.name, 0.0)
             setattr(self.state, f.name, base + (getattr(self.state, f.name) - base) * factor)

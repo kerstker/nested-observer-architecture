@@ -66,6 +66,7 @@ class _EpisodeIndex:
         self.group = np.zeros(0, dtype=object)
         self.vis = np.zeros(0, dtype=object)
         self.intensity = np.zeros(0)
+        self.valence = np.zeros(0)
         self.recalls = np.zeros(0)
 
     def extend(self, rows: List[sqlite3.Row]):
@@ -85,10 +86,11 @@ class _EpisodeIndex:
         self.intensity = np.concatenate([self.intensity, [max(abs(r["valence"] or 0), r["arousal"] or 0, r["surprise"] or 0)
                                                           for r in rows]])
         self.recalls = np.concatenate([self.recalls, [r["recall_count"] or 0 for r in rows]])
+        self.valence = np.concatenate([self.valence, [r["valence"] or 0. for r in rows]])
 
     def drop(self, ids: Iterable[int]):
         keep = ~np.isin(self.ids, list(ids))
-        for name in ("ids", "M", "t", "user", "group", "vis", "intensity", "recalls"):
+        for name in ("ids", "M", "t", "user", "group", "vis", "intensity", "recalls", "valence"):
             setattr(self, name, getattr(self, name)[keep])
 
     def allowed(self, user_id: Optional[str], group_id: Optional[str]) -> np.ndarray:
@@ -121,6 +123,7 @@ class EpisodicMemory:
     def __init__(self, db_path: str, embedder: Embedder):
         self.db_path = db_path
         self.embedder = embedder
+        self.mood_valence = 0.0
         self._index: Optional[_EpisodeIndex] = None
         self._lock = threading.RLock()
         self.recall_ms: List[float] = []       # recent recall timings, for the console
@@ -254,6 +257,8 @@ class EpisodicMemory:
                     age_days = np.maximum(0.0, now - idx.t[ok]) / 86400.0
                     recency = 0.5 ** (age_days / (30.0 * (1 + idx.recalls[ok])))
                     score = sims[ok] * recency * (1 + 0.5 * idx.intensity[ok])
+                    if self.mood_valence:
+                        score = score + .15*self.mood_valence*idx.valence[ok]
                     top = np.argsort(-score)[:k]
                     cand = [(float(score[i]), float(sims[ok][i]), int(idx.ids[ok][i])) for i in top]
         if deep:
@@ -297,6 +302,8 @@ class EpisodicMemory:
             for i in np.flatnonzero(ok):
                 age = max(0.0, now - part.t[i]) / 86400.0
                 score = sims[i] * 0.5 ** (age / (30.0 * (1 + part.recalls[i]))) * (1 + 0.5 * part.intensity[i])
+                if self.mood_valence:
+                    score += .15*self.mood_valence*part.valence[i]
                 out.append((float(score), float(sims[i]), int(part.ids[i])))
             out = sorted(out, key=lambda c: -c[0])[:k]
         conn.close()

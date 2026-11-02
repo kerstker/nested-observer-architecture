@@ -288,6 +288,9 @@ global_workspace.qq = qq   # her tools read group history / member info through 
 
 # The person who looks after her hears her requests to the maintainer (works with the evolve channel off)
 global_workspace.evolve_creator = str(config.get('EVOLVE_CREATOR_ID') or '') or None
+global_workspace.configure_core(
+    enabled=config.get("CORE_LOOP_ENABLED", False) is True,
+    welfare=config.get("WELFARE_GUARD_ENABLED", False) is True)
 
 # Level 17：改造自己的通道。默认关闭；只对创造者私聊和控制台开放；提案不会自动生效。
 if config.get('EVOLVE_ENABLED'):
@@ -848,6 +851,8 @@ async def main():
 
     # 启动主动发送循环（也是她的心跳）
     tasks.append(asyncio.create_task(proactive_sender_loop()))
+    if global_workspace.core_loop is not None:
+        tasks.append(asyncio.create_task(global_workspace.core_loop.run(), name="noa-core-state"))
 
     # 启动 Uvicorn 服务器
     port = config.get('PORT', 8080)
@@ -860,6 +865,7 @@ async def main():
     finally:
         for task in tasks:
             task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         # Level 15: 关机前保存自我，并留下最后的话
         await shutdown_handler()
 

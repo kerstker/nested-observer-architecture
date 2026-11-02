@@ -50,6 +50,9 @@
   "FILE_READ_ROOTS": [],
   "FILE_WRITE_ROOTS": [],
 
+  "CORE_LOOP_ENABLED": false,
+  "WELFARE_GUARD_ENABLED": false,
+
   "EVOLVE_ENABLED": false,
   "EVOLVE_CREATOR_ID": "",
   "EVOLVE_MAX_PER_DAY": 1,

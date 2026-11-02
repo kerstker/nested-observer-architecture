@@ -288,6 +288,29 @@ def history(gw, hours: float = 24.0, points: int = 300) -> List[Dict[str, Any]]:
                     "fear": emo.get("fear")})
     return out
 
+def core_history(gw, hours: float = 24.0, points: int = 300) -> Dict[str, Any]:
+    """Read-only experimental state; viewing a disabled system never migrates its DB."""
+    import math
+    db = gw.memory.db.db_path
+    since = clock.now() - hours * 3600
+    core = getattr(gw, "core_loop", None)
+    rows = _rows(db, "SELECT t, core FROM self_state WHERE t >= ? AND core IS NOT NULL "
+                     "ORDER BY t DESC LIMIT 10000", (since,))[::-1]
+    out = []
+    for row in rows[::max(1, math.ceil(len(rows) / max(1, points)))]:
+        try:
+            payload = json.loads(row["core"])
+            state = payload["state"]
+            out.append({"t": row["t"], "valence": state["valence"], "arousal": state["arousal"],
+                        "error": state["error"], "precision": state["precision"]})
+        except (ValueError, TypeError, KeyError):
+            continue
+    events = _rows(db, "SELECT t, kind, value, duration FROM welfare_events WHERE t >= ? "
+                      "ORDER BY t DESC LIMIT 100", (since,))
+    return {"enabled": core is not None, "current": core.payload() if core else None,
+            "points": out, "events": events}
+
+
 TOOL_FAILED = ("失败", "出错", "超时", "打不开", "没取到", "查不到", "没能")
 
 def metrics(gw, days: int = 7) -> Dict[str, Any]:

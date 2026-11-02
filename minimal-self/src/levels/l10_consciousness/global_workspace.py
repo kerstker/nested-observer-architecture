@@ -279,6 +279,7 @@ class GlobalWorkspace:
         self.awakening = 0
         self.continuity: Optional[Dict[str, Any]] = None
         self.style_edge = 0.0   # running measure of how sharp her recent replies were (personality homeostasis)
+        self.core_loop = None   # stage 1 is opt-in; no migration or control changes while disabled
         self._restore()
         self._update_temperament()
 
@@ -330,9 +331,31 @@ class GlobalWorkspace:
     # Persistent self (Phase 1)
     # ------------------------------------------------------------------
 
+    def configure_core(self, *, enabled=False, welfare=False):
+        """Explicit enablement after configuration/backup wiring; never enabled by restored data."""
+        if not enabled:
+            if self.core_loop is not None:
+                self.core_loop.close()
+                self.core_loop = None
+            return
+        if not welfare:
+            raise ValueError("core loop requires WELFARE_GUARD_ENABLED")
+        if self.core_loop is not None:
+            return
+        if not self.state_store.core_schema_ready():
+            if not getattr(self, "_evaluation_replica", False):
+                if self.backup is None:
+                    raise RuntimeError("stage 1 requires a verified pre-stage-1 backup")
+                result = self.backup.run(reason="pre-stage-1")
+                if not result.get("ok"):
+                    raise RuntimeError("pre-stage-1 backup failed")
+            self.state_store.enable_core_schema()
+        from .core_state import CoreLoop
+        self.core_loop = CoreLoop(self)
+
     def _snapshot(self) -> Dict[str, Any]:
         h = self.homeostasis
-        return {
+        snapshot = {
             "t": clock.now(),
             "energy": self.metabolism.energy,
             "is_sleeping": self.metabolism.is_sleeping,
@@ -355,10 +378,16 @@ class GlobalWorkspace:
             "last_self_check": self.last_self_check,
             "last_evolve_time": self.last_evolve_time,
         }
+        if self.core_loop is not None:
+            snapshot["core"] = self.core_loop.payload()
+        return snapshot
 
     def _save_state(self, cause: str):
         try:
-            self.state_store.save(self._snapshot(), cause)
+            if self.core_loop is None:
+                self.state_store.save(self._snapshot(), cause)
+            else:
+                self.state_store.save(self._snapshot(), cause, core=self.core_loop.payload())
             self.last_snapshot_time = clock.now()
         except Exception as e:
             logger.error(f"[State] Failed to save snapshot: {e}")
@@ -582,7 +611,10 @@ class GlobalWorkspace:
 
             # Level 8: Closed-loop drives choose (or decline) a self-initiated action; goals weigh in
             if now - self.last_action_time >= self.min_action_interval:
-                option = self.drives.choose(self.homeostasis.tick(), self.metabolism.energy,
+                decision_needs = self.homeostasis.tick()
+                if self.core_loop is not None:
+                    decision_needs = self.core_loop.anticipated_needs(decision_needs, self.min_action_interval)
+                option = self.drives.choose(decision_needs, self.metabolism.energy,
                                             self.user_models.private_users(),
                                             goal_value=lambda action, target: self.goals.value_for(action, target, now))
                 if option.action != "wait":
@@ -884,6 +916,8 @@ class GlobalWorkspace:
     # ------------------------------------------------------------------
 
     def _generation_params(self) -> Dict[str, Any]:
+        if self.core_loop is not None:
+            return self.core_loop.generation_params()
         energy = self.metabolism.energy
         arousal = self.emotion.arousal()
         return {
@@ -2488,7 +2522,7 @@ If not, output "NO".
 
 格式：
 Thought: [内心独白]
-Confidence: [0-100，你对自己这句话说得对、说得合适有多大把握]
+Confidence: [0-100，你对自己这句话说得对、说得合适有多大把握]{chr(10) + 'Emotion: [joy/anger/sorrow/fear/surprise/disgust/neutral 中的一项]' if self.core_loop else ''}
 Response: [说出口的话]
 
 [我是谁]
@@ -2531,7 +2565,9 @@ Response: [说出口的话]
         self.last_generation_params = params
         if self.inference_engine:
             try:
-                output = self._llm(prompt, media=media, **params)
+                from .response_budget import reply_request_params
+                request = reply_request_params(params, core_enabled=getattr(self, "core_loop", None) is not None)
+                output = self._llm(prompt, media=media, **request)
                 raw_text = output.get("reply", "...")
                 if not raw_text and output.get("error"):
                     # The model could not be reached: say so in character instead of sending nothing
@@ -2549,6 +2585,11 @@ Response: [说出口的话]
         ("Thought:" / "Thought："), and her inner monologue must never be sent as if she had said it."""
         # How sure she says she is: a verbal confidence report, never part of what she says
         self.last_verbal_confidence = None
+        if getattr(self, "core_loop", None) is not None:
+            label = re.search(r"(?m)^\s*Emotion\s*[:：]\s*(joy|anger|sorrow|fear|surprise|disgust|neutral)\s*$", raw_text)
+            if label:
+                self.core_loop.record_reply_label(label.group(1))
+                raw_text = raw_text[:label.start()] + raw_text[label.end():]
         conf = re.search(r"Confidence\s*[:：]\s*(\d{1,3})\s*%?", raw_text)
         if conf:
             self.last_verbal_confidence = min(100, int(conf.group(1))) / 100
@@ -2588,7 +2629,9 @@ Response: [说出口的话]
 
     async def _respond_native(self, prompt, emo_state, params, media, ctx: ToolContext) -> str:
         from .tool_protocol import recover_calls, protocol_text, spoken_text, assistant_calls
+        from .response_budget import reply_request_params
         engine = self.inference_engine
+        request = reply_request_params(params, native=True)
         self.last_generation_params = params
         messages = engine.chatml_to_messages(prompt)
         if media and hasattr(engine, "with_media"):
@@ -2606,14 +2649,14 @@ Response: [说出口的话]
             # sometimes wrote the call out as text (DeepSeek's DSML markup), which she then said in game chat.
             try:
                 out = await asyncio.to_thread(engine.chat_tools, messages, tools,
-                                              int(params.get("max_tokens", 200)) + 150,
+                                              request["max_tokens"],
                                               params.get("temperature", 0.7), "none" if last else None)
             except TypeError:                               # an engine whose chat_tools has no tool_choice argument
                 out = await asyncio.to_thread(engine.chat_tools, messages, None if last else tools,
-                                              int(params.get("max_tokens", 200)) + 150, params.get("temperature", 0.7))
+                                              request["max_tokens"], params.get("temperature", 0.7))
             self._keep_for_console("llm_trace", {
                 "t": clock.now(), "caller": f"agent_step_{step}" if ctx.origin == "reply" else f"task_step_{step}",
-                "params": {"max_tokens": int(params.get("max_tokens", 200)) + 150, "temperature": params.get("temperature"),
+                "params": {"max_tokens": request["max_tokens"], "temperature": params.get("temperature"),
                            "tools": len(tools), "tool_choice": "none" if last else "auto"},
                 "media": len(media or []), "prompt": json.dumps(messages[-3:], ensure_ascii=False, default=str)[-6000:],
                 "seconds": round(time.perf_counter() - started, 2), "error": out.get("error"),

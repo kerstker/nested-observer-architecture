@@ -250,6 +250,12 @@
       <h2>状态曲线<select id="hist-hours" aria-label="时间范围"><option value="6">6 小时</option><option value="24" selected>24 小时</option><option value="72">3 天</option><option value="168">7 天</option></select></h2>
       <div id="hist"></div>
     </section>
+    <section>
+      <h2>她的状态 · 实验</h2>
+      <div class="muted" id="core-status">读取中</div>
+      <div id="core-hist"></div>
+      <div id="core-events" class="muted"></div>
+    </section>
     <section><h2>情绪</h2><div id="feeling" style="margin-bottom:10px"></div><div id="emotions"></div></section>
     <section><h2>需求</h2><div id="needs"></div></section>
     <section>
@@ -928,7 +934,44 @@ function sparkline(points) {
       el("span", {}, el("i", { style: "background:rgba(180,140,255,.4)" }), "睡着")),
     el("div", { class: "when" }, `${fmt(t0)} → ${fmt(t1)} · ${points.length} 个快照`));
 }
-async function loadHistory() { sparkline(await api("history?hours=" + $("hist-hours").value)); }
+function coreChart(data) {
+  const current = data.current, s = current && current.state;
+  $("core-status").textContent = !data.enabled ? "核心状态循环未启用" :
+    `效价 ${s.valence.toFixed(2)} · 唤醒 ${s.arousal.toFixed(2)} · ${current.welfare.active ? "恢复调节中" : "正常监测"}`;
+  const box = $("core-hist"), points = data.points;
+  if (points.length < 2) box.replaceChildren(el("div", {class: "empty"}, "尚无足够的核心状态快照"));
+  else {
+    const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg");
+    const t0 = points[0].t, span = Math.max(1, points.at(-1).t - t0);
+    const x = t => 600 * (t - t0) / span, y = v => 126 - 122 * Math.max(0, Math.min(1, v));
+    svg.setAttribute("viewBox", "0 0 600 130"); svg.setAttribute("class", "spark");
+    svg.setAttribute("role", "img"); svg.setAttribute("aria-label", "核心效价、唤醒与身体预测误差曲线；竖线表示恢复事件");
+    const series = [["效价（−1 至 1）", p => (p.valence+1)/2, "var(--good)"],
+      ["唤醒", p => p.arousal, "var(--warn)"],
+      ["最大身体误差", p => Math.max(0, ...Object.values(p.error).map(Math.abs)), "var(--violet)"]];
+    for (const [,get,color] of series) {
+      const path = document.createElementNS(ns, "path");
+      path.setAttribute("d", points.map((p,i) => `${i ? "L" : "M"}${x(p.t).toFixed(1)},${y(get(p)).toFixed(1)}`).join(""));
+      path.setAttribute("fill", "none"); path.setAttribute("stroke", color); path.setAttribute("stroke-width", "1.6");
+      svg.append(path);
+    }
+    for (const event of data.events.filter(e => e.t >= t0 && e.t <= t0+span)) {
+      const line = document.createElementNS(ns, "line");
+      line.setAttribute("x1", x(event.t)); line.setAttribute("x2", x(event.t));
+      line.setAttribute("y1", 0); line.setAttribute("y2", 130); line.setAttribute("stroke", "var(--bad)");
+      line.setAttribute("stroke-dasharray", "3 3"); svg.append(line);
+    }
+    box.replaceChildren(svg, el("div", {class:"legend"}, ...series.map(([name,,c]) =>
+      el("span", {}, el("i", {style:`background:${c}`}), name))));
+  }
+  $("core-events").textContent = data.events.length ? data.events.slice(0,3).map(e =>
+    `${new Date(e.t*1000).toLocaleString("zh-CN")}：${e.kind === "anxiety" ? "持续焦虑" : "持续低效价"}，${Math.round(e.duration/60)} 分钟`).join("；") : "所选时段没有恢复事件";
+}
+async function loadHistory() {
+  const hours = $("hist-hours").value;
+  const [old, core] = await Promise.all([api("history?hours=" + hours), api("core?hours=" + hours)]);
+  sparkline(old); coreChart(core);
+}
 $("hist-hours").addEventListener("change", () => loadHistory().catch(() => {}));
 setInterval(() => { if (!document.hidden && tab === "overview") loadHistory().catch(() => {}); }, 60000);
 

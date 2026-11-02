@@ -1,0 +1,80 @@
+{
+  "integration_date": "2026-11-02",
+  "research_cutoff": "2026-10-29",
+  "sources": [
+    {
+      "path": "thefirstlife-dev/docs/experiments/stage-1-v3-review-20261028.md",
+      "sha256": "42fbb77b03a8d6d5ce0dfdafebc338ed4aeacbe8e84397c38a1b57073151c99f"
+    },
+    {
+      "path": "thefirstlife-dev/data/eval/stage1-v3-proposal-20261028/proposal-manifest.json",
+      "sha256": "6bfc308abbfa9bfe354e5b6f5df71e745a8461bcea38287a504fdb24ff3376b4"
+    },
+    {
+      "path": "output/意识研究_实验二十六_20261029_v27/experiments/protocol.json",
+      "sha256": "9890f5b4928554800bcc481806beabd26a4354cf0dd3ddddae094975459d179e"
+    },
+    {
+      "path": "output/意识研究_实验二十六_20261029_v27/results/analysis.json",
+      "sha256": "341586956e431a77dd03ddfc1fb7ab8437332c7a519db1047dc3fd85c850cf11"
+    },
+    {
+      "path": "output/意识研究_实验二十六_20261029_v27/results/HOLDOUT_EXPOSURE.json",
+      "sha256": "eb181f423040cbab00caddf06e8481c01112bf34bd6970e9be920f187b4d83aa"
+    },
+    {
+      "path": "output/意识研究_实验二十七_20261029_v28/experiments/protocol.json",
+      "sha256": "b62266222ba465de2565f6295d039d4f376f37f688c27a40e7df8bcfc10aa121"
+    }
+  ],
+  "stage1_v3": {
+    "implementation_tests_reported": 1124,
+    "language_effect_gate_passed": false,
+    "social_anticipation_gate_passed": false,
+    "default_enabled": false
+  },
+  "E26": {
+    "closed_loop_tested": true,
+    "against_full": {
+      "fixed_last": {
+        "passed": false,
+        "speed_passed": true,
+        "test_quality_passed": false,
+        "reserve_quality_passed": false
+      },
+      "short": {
+        "passed": false,
+        "speed_passed": true,
+        "test_quality_passed": false,
+        "reserve_quality_passed": false
+      },
+      "ema": {
+        "passed": false,
+        "speed_passed": true,
+        "test_quality_passed": false,
+        "reserve_quality_passed": false
+      },
+      "mlp": {
+        "passed": false,
+        "speed_passed": true,
+        "test_quality_passed": false,
+        "reserve_quality_passed": false
+      }
+    },
+    "adaptive_incremental_advantage": {
+      "ema": false,
+      "mlp": false
+    },
+    "general_training_acceleration_proven": false,
+    "self_representation_necessity_proven": false
+  },
+  "E27": {
+    "status": "protocol_and_partial_source_only",
+    "completed_results_found": false
+  },
+  "self_prediction_exp": {
+    "status": "exploratory_only",
+    "production_adopted": false
+  },
+  "scope": "Engineering integration and quality gates; not evidence of consciousness or general acceleration."
+}

@@ -1,0 +1,37 @@
+{
+  "date": "2026-11-02",
+  "python": "3.14",
+  "public_suite": {
+    "passed": 842,
+    "skipped": 1,
+    "failed": 0,
+    "seconds": 750.19,
+    "skip_reason": "Optional local embedding model not downloaded in the public checkout (test_combined_vectors_recall_paraphrases)."
+  },
+  "dev_baseline": {
+    "passed": 1098,
+    "failed": 0,
+    "seconds": 615.48
+  },
+  "focused_first_run": {
+    "passed": 63,
+    "failed": 0,
+    "seconds": 40.11
+  },
+  "ui": {
+    "mode": "isolated component fixture using production CSS and coreChart",
+    "disabled_state": "checked",
+    "enabled_state": "checked",
+    "mobile_width": 390,
+    "horizontal_overflow": false
+  },
+  "secrets_scan": {
+    "files_at_scan": 27,
+    "findings": 0
+  },
+  "limits": [
+    "Public suite is distinct from the private development checkout.",
+    "No live app restart, production feature activation, model training or paid API evaluation.",
+    "Engineering regressions are not evidence of consciousness or end-to-end training acceleration."
+  ]
+}

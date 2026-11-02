@@ -26,12 +26,51 @@ class SelfStateStore:
         conn.commit()
         conn.close()
 
-    def save(self, snapshot: Dict[str, Any], cause: str):
+    def core_schema_ready(self):
         conn = _connect(self.db_path)
-        conn.execute("INSERT INTO self_state (t, cause, snapshot) VALUES (?, ?, ?)",
-                     (snapshot["t"], cause, json.dumps(snapshot, ensure_ascii=False)))
-        conn.commit()
-        conn.close()
+        try:
+            return any(r[1] == "core" for r in conn.execute("PRAGMA table_info(self_state)"))
+        finally:
+            conn.close()
+
+    def enable_core_schema(self):
+        conn = _connect(self.db_path)
+        try:
+            if not any(r[1] == "core" for r in conn.execute("PRAGMA table_info(self_state)")):
+                conn.execute("ALTER TABLE self_state ADD COLUMN core JSON")
+            conn.commit()
+        finally:
+            conn.close()
+
+    def latest_core(self):
+        if not self.core_schema_ready():
+            return None
+        conn = _connect(self.db_path)
+        try:
+            row = conn.execute("SELECT core FROM self_state WHERE core IS NOT NULL ORDER BY id DESC LIMIT 1").fetchone()
+            if not row:
+                return None
+            try:
+                value = json.loads(row["core"])
+                return value if isinstance(value, dict) else None
+            except (TypeError, ValueError):
+                return None
+        finally:
+            conn.close()
+
+    def save(self, snapshot: Dict[str, Any], cause: str, core=None):
+        conn = _connect(self.db_path)
+        try:
+            if core is None:
+                conn.execute("INSERT INTO self_state (t, cause, snapshot) VALUES (?, ?, ?)",
+                             (snapshot["t"], cause, json.dumps(snapshot, ensure_ascii=False)))
+            else:
+                conn.execute("INSERT INTO self_state (t, cause, snapshot, core) VALUES (?, ?, ?, ?)",
+                             (snapshot["t"], cause, json.dumps(snapshot, ensure_ascii=False),
+                              json.dumps(core, ensure_ascii=False)))
+            conn.commit()
+        finally:
+            conn.close()
 
     def latest(self) -> Optional[Dict[str, Any]]:
         conn = _connect(self.db_path)

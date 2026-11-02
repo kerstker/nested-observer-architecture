@@ -11,6 +11,7 @@ live process) and compared with the same run on the unchanged code.
   better), so a change can be recognised as better even when everything already passes.
 """
 import json
+import math
 import os
 import subprocess
 import sys
@@ -70,19 +71,39 @@ def evaluate(repo_root: str, seeds: Iterable[int] = (0, 1, 2), timeout: float = 
     return summarise(runs, errors)
 
 def summarise(runs: Dict[int, List[Dict[str, Any]]], errors: List[str] = None) -> Dict[str, Any]:
-    by, names, metrics = {}, {}, {}
+    by, names, metrics, metric_samples = {}, {}, {}, {}
+    errors = list(errors or [])
     for seed, results in runs.items():
         for r in results:
-            by[f"{r['id']}@{seed}"] = bool(r["passed"])
+            sample = f"{r['id']}@{seed}"
+            if sample in by:
+                errors.append(f"duplicate evaluation sample: {sample}")
+                continue
+            by[sample] = bool(r["passed"])
             names[r["id"]] = r.get("name", r["id"])
             for k, v in (r.get("metrics") or {}).items():
-                metrics.setdefault(k, []).append(float(v))
+                try:
+                    value = float(v)
+                    if not math.isfinite(value):
+                        raise ValueError("non-finite metric")
+                except (TypeError, ValueError, OverflowError):
+                    errors.append(f"invalid metric: {sample}/{k}")
+                    continue
+                metrics.setdefault(k, []).append(value)
+                metric_samples.setdefault(k, []).append(sample)
     return {"passed": sum(by.values()), "total": len(by), "by": by, "names": names,
-            "metrics": {k: sum(v) / len(v) for k, v in metrics.items()}, "errors": errors or []}
+            "metrics": {k: sum(v) / len(v) for k, v in metrics.items()},
+            "metric_samples": {k: sorted(v) for k, v in metric_samples.items()}, "errors": errors}
 
 def compare(before: Dict[str, Any], after: Dict[str, Any], target: Optional[str] = None,
-            directions: Dict[str, str] = None, min_gain: float = 0.05) -> Dict[str, Any]:
-    """Is the candidate better, the same, or worse than what she is now?"""
+            directions: Dict[str, str] = None, min_gain: float = 0.05,
+            quality_tolerances: Dict[str, float] = None) -> Dict[str, Any]:
+    """Quality first, then improvement; no statistical significance is implied.
+
+    quality_tolerances are predeclared absolute non-regression limits, e.g.
+    {"accuracy": .002, "ce": .01}. Other metrics retain the relative min_gain
+    threshold. Do not tune either threshold on the candidate's confirmation set.
+    """
     if directions is None:
         try:
             from src.evaluation.scenarios import METRIC_DIRECTIONS as directions
@@ -90,14 +111,50 @@ def compare(before: Dict[str, Any], after: Dict[str, Any], target: Optional[str]
             directions = {}
     regressions = [k for k, ok in before["by"].items() if ok and not after["by"].get(k, False)]
     fixed = [k for k, ok in after["by"].items() if ok and not before["by"].get(k, False)]
+    # E26 lesson: a cheaper or improved target cannot compensate for lost quality.
+    # The same scenario/seed and metric cohorts must be measured on both sides.
+    evidence_errors = []
+    if not before["by"] or set(before["by"]) != set(after["by"]):
+        evidence_errors.append("scenario/seed coverage changed or empty")
+    if set(before["metrics"]) != set(after["metrics"]):
+        evidence_errors.append("metric coverage changed")
+    if before.get("metric_samples") != after.get("metric_samples"):
+        evidence_errors.append("metric sample coverage changed")
+    if before["errors"]:
+        evidence_errors.append("baseline evaluation failed")
+    if not math.isfinite(min_gain) or min_gain <= 0:
+        raise ValueError("min_gain must be finite and positive")
+    if target and (target not in directions or target not in before["metrics"]):
+        evidence_errors.append("target metric missing or direction unknown")
+    quality_tolerances = quality_tolerances or {}
+    for k, tolerance in quality_tolerances.items():
+        if not math.isfinite(tolerance) or tolerance < 0:
+            raise ValueError("quality tolerances must be finite and nonnegative")
+        if k not in before["metrics"] or k not in directions:
+            evidence_errors.append(f"required quality metric missing: {k}")
     changes = {}
     for k, b in before["metrics"].items():
         a = after["metrics"].get(k)
+        if not isinstance(b, (int, float)) or not math.isfinite(b) or (
+                a is not None and (not isinstance(a, (int, float)) or not math.isfinite(a))):
+            evidence_errors.append(f"invalid metric: {k}")
+            continue
         if a is None or k not in directions:
+            continue
+        if directions[k] not in ("lower", "higher"):
+            evidence_errors.append(f"invalid metric direction: {k}")
             continue
         gain = (b - a) if directions[k] == "lower" else (a - b)
         changes[k] = {"before": b, "after": a, "gain": gain / max(abs(b), 1e-6)}
-    if after["errors"] or regressions or after["total"] < before["total"]:
+    metric_regressions = []
+    for k, c in changes.items():
+        if k in quality_tolerances:
+            loss = c["after"] - c["before"] if directions[k] == "lower" else c["before"] - c["after"]
+            if loss > quality_tolerances[k] and not math.isclose(loss, quality_tolerances[k], abs_tol=1e-12):
+                metric_regressions.append(k)
+        elif c["gain"] <= -min_gain:
+            metric_regressions.append(k)
+    if after["errors"] or evidence_errors or regressions or metric_regressions:
         verdict = "worse"
     elif fixed:
         verdict = "better"
@@ -119,5 +176,8 @@ def compare(before: Dict[str, Any], after: Dict[str, Any], target: Optional[str]
             parts.append(f"{k} {c['before']:.3g} → {c['after']:.3g}")
     if after["errors"]:
         parts.append("出错：" + "；".join(after["errors"])[:200])
+    if evidence_errors:
+        parts.append("证据不完整：" + "; ".join(evidence_errors))
     return {"verdict": verdict, "regressions": regressions, "fixed": fixed, "changes": changes,
+            "metric_regressions": metric_regressions, "evidence_errors": evidence_errors,
             "summary": "，".join(parts)}

@@ -39,7 +39,10 @@
     "port": 8080,
     "existing_instance": false,
     "real_model_plan_tool_called": true,
-    "console_reply_nonempty": true
+    "console_reply_nonempty": true,
+    "live_feedback_observed_goal": true,
+    "live_files_hash_verified": true,
+    "feedback_required_resubmission": true
   },
   "limitations": [
     "Controlled filesystem task; not a general SOTA result.",

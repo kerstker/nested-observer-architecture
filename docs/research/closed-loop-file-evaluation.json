@@ -1,0 +1,2197 @@
+{
+  "scope": "Real temporary file construction with hash verification; controlled actuator failures, not general intelligence.",
+  "training_tasks": 20,
+  "test_payload_seeds": [
+    1000,
+    1059
+  ],
+  "summary": {
+    "adaptive": {
+      "tasks": 60,
+      "success_rate": 1.0,
+      "mean_action_cost": 1.6
+    },
+    "without_self": {
+      "tasks": 60,
+      "success_rate": 1.0,
+      "mean_action_cost": 2.0
+    },
+    "fixed": {
+      "tasks": 60,
+      "success_rate": 0.5,
+      "mean_action_cost": 3.2
+    },
+    "simple_rule": {
+      "tasks": 60,
+      "success_rate": 1.0,
+      "mean_action_cost": 1.6
+    }
+  },
+  "rows": [
+    {
+      "seed": 1000,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1000,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1000,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1000,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1001,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1001,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1001,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1001,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1002,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1002,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1002,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1002,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1003,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1003,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1003,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1003,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1004,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1004,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1004,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1004,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1005,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1005,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1005,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1005,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1006,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1006,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1006,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1006,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1007,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1007,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1007,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1007,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1008,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1008,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1008,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1008,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1009,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1009,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1009,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1009,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1010,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1010,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1010,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1010,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1011,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1011,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1011,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1011,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1012,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1012,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1012,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1012,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1013,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1013,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1013,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1013,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1014,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1014,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1014,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1014,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1015,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1015,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1015,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1015,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1016,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1016,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1016,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1016,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1017,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1017,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1017,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1017,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1018,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1018,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1018,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1018,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1019,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1019,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1019,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1019,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1020,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1020,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1020,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1020,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1021,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1021,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1021,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1021,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1022,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1022,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1022,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1022,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1023,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1023,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1023,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1023,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1024,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1024,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1024,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1024,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1025,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1025,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1025,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1025,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1026,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1026,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1026,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1026,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1027,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1027,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1027,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1027,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1028,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1028,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1028,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1028,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1029,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1029,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1029,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1029,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1030,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1030,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1030,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1030,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1031,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1031,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1031,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1031,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1032,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1032,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1032,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1032,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1033,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1033,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1033,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1033,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1034,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1034,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1034,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1034,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1035,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1035,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1035,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1035,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1036,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1036,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1036,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1036,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1037,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1037,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1037,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1037,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1038,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1038,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1038,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1038,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1039,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1039,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1039,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1039,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1040,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1040,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1040,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1040,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1041,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1041,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1041,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1041,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1042,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1042,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1042,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1042,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1043,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1043,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1043,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1043,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1044,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1044,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1044,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1044,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1045,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1045,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1045,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1045,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1046,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1046,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1046,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1046,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1047,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1047,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1047,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1047,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1048,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1048,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1048,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1048,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1049,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1049,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1049,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1049,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1050,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1050,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1050,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1050,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1051,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1051,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1051,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1051,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1052,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1052,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1052,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1052,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1053,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1053,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1053,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1053,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1054,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1054,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1054,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1054,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1055,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1055,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1055,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1055,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1056,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1056,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1056,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1056,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1057,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1057,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1057,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1057,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1058,
+      "low_energy": true,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1058,
+      "low_energy": true,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1058,
+      "low_energy": true,
+      "mode": "fixed",
+      "correct": false,
+      "action_cost": 5.2,
+      "actual_actions": 6,
+      "sha256_verified": false
+    },
+    {
+      "seed": 1058,
+      "low_energy": true,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1059,
+      "low_energy": false,
+      "mode": "adaptive",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1059,
+      "low_energy": false,
+      "mode": "without_self",
+      "correct": true,
+      "action_cost": 2.0,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1059,
+      "low_energy": false,
+      "mode": "fixed",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    },
+    {
+      "seed": 1059,
+      "low_energy": false,
+      "mode": "simple_rule",
+      "correct": true,
+      "action_cost": 1.2,
+      "actual_actions": 2,
+      "sha256_verified": true
+    }
+  ],
+  "limitations": [
+    "Cost units are declared action costs, not end-to-end latency or API money.",
+    "Simple-rule control has the known failure condition; no claim of superiority over it.",
+    "No human conversational or open-world benchmark."
+  ]
+}

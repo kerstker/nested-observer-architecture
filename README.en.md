@@ -29,7 +29,7 @@ gates are preserved, with no claim of consciousness or general training accelera
 ## Why it is worth reading
 
 1. **Layered, but not a state machine.** Every level in L1–L10 is testable on its own
-   (868 tests, no network, no API key). L10's `global_workspace.py` only orchestrates.
+   (876 tests, no network, no API key). L10's `global_workspace.py` only orchestrates.
 2. **Attention is a slot, not a concatenation.** Inputs become candidate stimuli that compete for the
    same workspace; only the winner enters this round of consciousness. This is where her behaviour
    diverges from "stuff every context into one prompt".
@@ -166,7 +166,7 @@ python -m pytest -q
 | `minimal-self/src/levels/l1…l10` | perception, memory, metabolism, emotion, values, homeostasis, ToM, agency, narrative, consciousness |
 | `minimal-self/src/levels/l17…l19` | self-improvement (maintenance requests), knowledge base, search |
 | `minimal-self/src/evaluation/` | 15 behavioural scenarios and a simulator (a simulated week runs in minutes) |
-| `minimal-self/tests/` | 868 tests, including fake MCP and fake game servers |
+| `minimal-self/tests/` | 876 tests, including fake MCP and fake game servers |
 | `scripts/` | maintenance requests, audits, evolve proposals, backup/restore, sense servers |
 | `docs/` | architecture document and four generated SVGs |
 | `AGENTS.md` | working protocol for the maintenance agent |
@@ -203,3 +203,5 @@ file, and a real Minecraft server integration test.
   conversation fragments in the repository are test fixtures and evaluation scenarios, not real users.
 - In your own deployment, all conversations and memories stay on your machine; whatever is sent to a
   model provider is subject to that provider's terms.
+
+Multi-step planning, learned transitions, feedback and real file verification: [closed-loop validation](docs/research/closed-loop-20261102.md).

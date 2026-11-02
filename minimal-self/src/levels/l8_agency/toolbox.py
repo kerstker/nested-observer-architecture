@@ -735,6 +735,18 @@ def _look_inside(gw, ctx: ToolContext, args):
         return view.logs(str(args.get("level") or ""), args.get("count") or 30)
     return view.process()
 
+def _plan_actions(gw, ctx, args):
+    result = gw.planner.plan(args.get("problem"), scope=f"{ctx.user_id}:{ctx.group_id or ''}",
+                             self_state=args.get("self_state"), max_steps=args.get("max_steps", 8),
+                             max_nodes=args.get("max_nodes", 4000))
+    return json.dumps(result, ensure_ascii=False)
+
+
+def _observe_plan(gw, ctx, args):
+    return json.dumps(gw.planner.observe(args.get("ticket"), args.get("action"),
+                                        args.get("before"), args.get("after")), ensure_ascii=False)
+
+
 def _solve_constraints(gw, ctx, args):
     result = gw.verified_reasoner.solve(args.get("problem"), operations=args.get("operations", 20000),
                                         scope=f"{ctx.user_id}:{ctx.group_id or ''}")
@@ -749,6 +761,13 @@ def _qq_ready(gw, ctx):
     return q is not None and q.connected()
 
 TOOLS: List[Tool] = [
+    Tool("plan_actions", "规划多步行动。problem含initial/goal整数状态及actions；动作含name、requires最低资源、effects状态增量、cost正数。"
+         "返回预测路径和ticket，尚未执行。仅通过已有授权工具执行，每步后用observe_plan报告实际状态；偏离时重新规划。",
+         _props(["problem"], problem={"type": "object"}, self_state={"type": "object"},
+                max_steps=_i("最大步数1..16"), max_nodes=_i("最大节点1..20000")), _plan_actions, _owner, read_only=True),
+    Tool("observe_plan", "报告计划一步的实际执行前后状态。实际观察到目标才记完成；偏离预测时重新规划。正常返回不代表完成。",
+         _props(["ticket", "action", "before", "after"], ticket=_s("计划ticket"), action=_s("动作名"),
+                before={"type": "object"}, after={"type": "object"}), _observe_plan, _owner),
     Tool("solve_constraints", "求解有限整数约束，例如排程、组合、资源分配；只给满足已写约束且通过验证的答案。"
          "不会执行排程或改文件。problem 含 variables（变量名到整数候选列表）与 constraints；"
          "约束 op 为 sum_eq/sum_le/sum_ge（vars 和 value）或 all_different（vars）。最多12变量。",
@@ -842,6 +861,7 @@ ALIASES = {"recall": "recall", "memorize": "remember", "remember": "remember", "
            "list_tasks": "list_tasks", "cancel_task": "cancel_task", "group_history": "group_history",
            "member_info": "member_info", "evolve": "evolve", "ask_maintainer": "ask_maintainer"}
 ALIASES["solve_constraints"] = "solve_constraints"
+ALIASES.update({"plan_actions": "plan_actions", "observe_plan": "observe_plan"})
 
 _ACTION = re.compile(r"Action\s*[:：]\s*([A-Za-z_]+)[ \t]*(.*)")
 _KV = re.compile(r"""([A-Za-z_]+)\s*[=＝:：]\s*(?:"([^"]*)"|'([^']*)'|“([^”]*)”|「([^」]*)」|([^\s,，]+))""")

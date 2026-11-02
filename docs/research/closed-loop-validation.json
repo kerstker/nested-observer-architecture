@@ -1,0 +1,49 @@
+{
+  "public_full": {
+    "passed": 874,
+    "skipped": 1
+  },
+  "development_full": {
+    "passed": 1169
+  },
+  "final_focused": {
+    "passed": 45
+  },
+  "note": "Full suites began before the final empirical-transition update; final focused suite covers it and the added test.",
+  "real_files": {
+    "adaptive": {
+      "tasks": 60,
+      "success_rate": 1.0,
+      "mean_action_cost": 1.6
+    },
+    "without_self": {
+      "tasks": 60,
+      "success_rate": 1.0,
+      "mean_action_cost": 2.0
+    },
+    "fixed": {
+      "tasks": 60,
+      "success_rate": 0.5,
+      "mean_action_cost": 3.2
+    },
+    "simple_rule": {
+      "tasks": 60,
+      "success_rate": 1.0,
+      "mean_action_cost": 1.6
+    }
+  },
+  "runtime": {
+    "pid": 2116,
+    "http_ready": true,
+    "app_started": true,
+    "port": 8080,
+    "existing_instance": false,
+    "real_model_plan_tool_called": true,
+    "console_reply_nonempty": true
+  },
+  "limitations": [
+    "Controlled filesystem task; not a general SOTA result.",
+    "Simple rule matches adaptive planning.",
+    "Modal empirical transitions; not a neural world model or causal identification."
+  ]
+}

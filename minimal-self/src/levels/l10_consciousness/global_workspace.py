@@ -43,6 +43,7 @@ from .self_view import SelfView
 from .metacognition import Metacognition
 from .action_prediction import ActionPrediction, ANSWER
 from ...levels.l8_agency.verified_reasoning import VerifiedReasoner
+from ...levels.l8_agency.planning import Planner
 from ...levels.l9_narrative.narrative import NarrativeSelf
 from ...levels.l9_narrative.style_anchors import StyleAnchors
 from ...levels.l7_tom.subtext import SubtextReader
@@ -141,6 +142,7 @@ class GlobalWorkspace:
         self.self_model = SelfModel()
         self.action_prediction = ActionPrediction()
         self.verified_reasoner = VerifiedReasoner()
+        self.planner = Planner()
 
         # Predictive models of people, learned drives
         self.user_models = UserModelStore(db_path)
@@ -375,6 +377,7 @@ class GlobalWorkspace:
             "attention": self.workspace.attention,
             "self_model": self.self_model.to_dict(),
             "action_prediction": self.action_prediction.to_dict(),
+            "planner": self.planner.to_dict(),
             "attention_schema": self.attention_schema.to_dict(),
             "metacognition": self.metacog.to_dict(),
             "awakening": self.awakening,
@@ -426,6 +429,7 @@ class GlobalWorkspace:
         self.existential_anxiety = snap.get("existential_anxiety", 0.0) * 0.5 ** (gap / self.anxiety_half_life)
         self.self_model.load_dict(snap.get("self_model", {}))
         self.action_prediction.load_dict(snap.get("action_prediction", {}))
+        self.planner.load_dict(snap.get("planner", {}))
         self.attention_schema.load_dict(snap.get("attention_schema", {}))
         self.metacog.load_dict(snap.get("metacognition", {}))
         self.style_edge = snap.get("style_edge", 0.0)
